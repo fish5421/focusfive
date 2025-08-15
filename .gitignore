@@ -1,0 +1,43 @@
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+/goals/
+/export/
+*.log
+.env
+.env.local
+
+# Claude Code
+.claude/cache/
+.claude/session/
+*.tmp
+
+# Development
+/dev-goals/
+/test-data/
+/tmp/
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Personal data
+/personal/
+/private/
