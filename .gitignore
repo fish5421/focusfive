@@ -11,10 +11,13 @@ Cargo.lock
 *~
 .vscode/
 *.iml
+.cursor/
 
 # OS
 .DS_Store
 Thumbs.db
+.Spotlight-V100
+.Trashes
 
 # Project specific
 /goals/
@@ -24,14 +27,18 @@ Thumbs.db
 .env.local
 
 # Claude Code
-.claude/cache/
-.claude/session/
+.claude/
+.serena/
 *.tmp
+
+# Serverless
+.serverless/
 
 # Development
 /dev-goals/
 /test-data/
 /tmp/
+test_env/
 
 # Backup files
 *.bak
@@ -41,3 +48,66 @@ Thumbs.db
 # Personal data
 /personal/
 /private/
+
+# Test artifacts
+test_edge_case
+test_parse_simple
+*.pyc
+__pycache__/
+
+# Python test scripts outputs
+*_validation_results.json
+*_validation_report.json
+error_handling_validation_results.json
+ROUND_TRIP_*.json
+
+# Temporary documentation (keep only essential docs)
+*_SUMMARY.md
+*_REPORT.md
+*_COMPLETE.md
+*_IMPLEMENTATION*.md
+CRITICAL_*.md
+ERROR_*.md
+PHASE_*.md
+FEATURE_*.md
+FILE_IO_*.md
+DYNAMIC_*.md
+SAVE_*.md
+VISION_*.md
+GOAL_*.md
+PARSER_*.md
+SIMPLE_TEST.md
+SOLUTION_*.md
+TESTING_GUIDE.md
+TEST_EXECUTION_GUIDE.md
+PHASE_COMPARISON.md
+RITUAL_PHASES_DESIGN.md
+VALIDATION_REPORT.md
+COMPLETE_*.md
+
+# Keep important documentation
+!USER_GUIDE.md
+!DEVELOPER_DOCUMENTATION.md
+!SOURCE_CODE.md
+!CLAUDE.md
+!README.md
+!QUICK_START_GUIDE.md
+
+# Temporary shell scripts
+debug_*.sh
+demo_*.sh
+GO_TO_GOALS.sh
+test_*.sh
+
+# Temporary test files
+test_*.md
+test_*.rs
+validate_*.py
+
+# Sample implementations
+sample_*.rs
+
+# Python scripts (temporary)
+simulate_*.py
+quick_test.py
+test_file_io_manually.py

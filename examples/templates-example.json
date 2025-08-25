@@ -1,0 +1,58 @@
+{
+  "templates": {
+    "work_morning": [
+      "Check emails and respond to urgent ones",
+      "Review today's calendar and meetings", 
+      "Update task board with priorities"
+    ],
+    "work_deep": [
+      "Focus on main project (2 hour block)",
+      "Code review and PR feedback",
+      "Documentation and notes",
+      "Test new features",
+      "Refactor legacy code"
+    ],
+    "work_wrap": [
+      "Clean up inbox",
+      "Update tomorrow's task list",
+      "Sync with team on Slack"
+    ],
+    "health_active": [
+      "30 minute workout or walk",
+      "Drink 8 glasses of water",
+      "Healthy lunch away from desk",
+      "Take vitamin supplements"
+    ],
+    "health_recovery": [
+      "10 minute stretching",
+      "Meditation or breathing exercises",
+      "Early bedtime (before 10pm)"
+    ],
+    "family_quality": [
+      "Breakfast together (no phones)",
+      "Call or message loved ones",
+      "Plan weekend activity"
+    ],
+    "family_support": [
+      "Help with homework or chores",
+      "Cook dinner together",
+      "Evening walk or game time",
+      "Read bedtime stories"
+    ],
+    "productivity_boost": [
+      "Clear desk and organize workspace",
+      "Time-block calendar for deep work",
+      "Turn off notifications for 2 hours",
+      "Review and prioritize task list"
+    ],
+    "weekend_routine": [
+      "Sleep in until naturally wake up",
+      "Prepare special breakfast",
+      "Plan one fun family activity",
+      "Catch up on personal projects",
+      "Meal prep for the week"
+    ]
+  },
+  "created": "2025-08-23",
+  "modified": "2025-08-23"
+}

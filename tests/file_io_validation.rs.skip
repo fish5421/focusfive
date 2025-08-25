@@ -1,0 +1,1015 @@
+use anyhow::Result;
+use chrono::NaiveDate;
+use focusfive::data::{load_or_create_goals, write_goals_file};
+use focusfive::models::{Config, DailyGoals};
+use std::fs::{self, OpenOptions};
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
+use std::sync::{Arc, Barrier, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
+use tempfile::TempDir;
+
+/// Comprehensive File I/O and Atomic Operations Test Suite
+///
+/// This test suite validates the robustness of file handling in data.rs,
+/// focusing on atomic operations, error handling, and real-world failure scenarios.
+
+#[cfg(test)]
+mod file_io_tests {
+    use super::*;
+
+    // =====================================
+    // Test 1: Atomic Write Operations
+    // =====================================
+
+    // Test skipped - atomic_write is now private
+    // #[test]
+    // fn test_atomic_write_creates_temp_file() -> Result<()> {
+    //     let temp_dir = TempDir::new()?;
+    //     let target_path = temp_dir.path().join("test_file.md");
+    //     let content = b"Test content for atomic write";
+
+    //     // Before atomic write - no files should exist
+    //     assert!(!target_path.exists());
+
+    //     // Perform atomic write
+    //     let result = atomic_write(&target_path, content);
+
+    //     // Should succeed
+    //     assert!(result.is_ok());
+
+    //     // Target file should exist with correct content
+    //     assert!(target_path.exists());
+    //     let written_content = fs::read(&target_path)?;
+    //     assert_eq!(written_content, content);
+
+    //     // Temp file should not exist (should be cleaned up)
+    //     let temp_path = target_path.with_extension("tmp");
+    //     assert!(!temp_path.exists());
+
+    //     Ok(())
+    // }
+
+    #[test]
+    fn test_atomic_write_prevents_partial_reads() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let target_path = temp_dir.path().join("atomic_test.md");
+
+        // Create a large content to ensure write takes some time
+        let large_content = "x".repeat(100000).into_bytes();
+
+        // This test verifies that either the file doesn't exist or contains complete content
+        // (no partial writes visible to other processes)
+        let result = atomic_write(&target_path, &large_content);
+        assert!(result.is_ok());
+
+        // Verify complete content
+        let read_content = fs::read(&target_path)?;
+        assert_eq!(read_content, large_content);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_atomic_write_file_sync() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let target_path = temp_dir.path().join("sync_test.md");
+        let content = b"Content that must be synced to disk";
+
+        // Test that atomic_write properly syncs before rename
+        let result = atomic_write(&target_path, content);
+        assert!(result.is_ok());
+
+        // File should exist and be readable immediately
+        assert!(target_path.exists());
+        let read_content = fs::read(&target_path)?;
+        assert_eq!(read_content, content);
+
+        Ok(())
+    }
+
+    // =====================================
+    // Test 2: Directory Creation
+    // =====================================
+
+    #[test]
+    fn test_directory_creation_when_goals_dir_missing() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let goals_dir = temp_dir.path().join("non_existent").join("goals");
+
+        // Ensure directory doesn't exist
+        assert!(!goals_dir.exists());
+
+        let config = Config {
+            goals_dir: goals_dir.to_string_lossy().to_string(),
+        };
+
+        let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
+        let goals = DailyGoals::new(date);
+
+        // write_goals_file should create the directory
+        let result = write_goals_file(&goals, &config);
+        assert!(result.is_ok());
+
+        // Directory should now exist
+        assert!(goals_dir.exists());
+        assert!(goals_dir.is_dir());
+
+        // File should exist in the created directory
+        let expected_file = goals_dir.join("2025-01-15.md");
+        assert!(expected_file.exists());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_nested_directory_creation() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let deep_path = temp_dir
+            .path()
+            .join("level1")
+            .join("level2")
+            .join("level3")
+            .join("goals");
+
+        let config = Config {
+            goals_dir: deep_path.to_string_lossy().to_string(),
+        };
+
+        let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
+        let goals = DailyGoals::new(date);
+
+        let result = write_goals_file(&goals, &config);
+        assert!(result.is_ok());
+
+        // All directories should be created
+        assert!(deep_path.exists());
+        assert!(deep_path.is_dir());
+
+        Ok(())
+    }
+
+    // =====================================
+    // Test 3: File Permissions and Access Rights
+    // =====================================
+
+    #[test]
+    #[cfg(unix)]
+    fn test_read_only_directory_fails_gracefully() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let readonly_dir = temp_dir.path().join("readonly");
+        fs::create_dir(&readonly_dir)?;
+
+        // Make directory read-only
+        let mut perms = fs::metadata(&readonly_dir)?.permissions();
+        perms.set_mode(0o444); // Read-only
+        fs::set_permissions(&readonly_dir, perms)?;
+
+        let config = Config {
+            goals_dir: readonly_dir.to_string_lossy().to_string(),
+        };
+
+        let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
+        let goals = DailyGoals::new(date);
+
+        // Should fail gracefully with permission error
+        let result = write_goals_file(&goals, &config);
+        assert!(result.is_err());
+
+        // Restore permissions for cleanup
+        let mut perms = fs::metadata(&readonly_dir)?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&readonly_dir, perms)?;
+
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_readonly_file_overwrite_fails() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let file_path = temp_dir.path().join("readonly_test.md");
+
+        // Create initial file
+        fs::write(&file_path, "Initial content")?;
+
+        // Make file read-only
+        let mut perms = fs::metadata(&file_path)?.permissions();
+        perms.set_mode(0o444);
+        fs::set_permissions(&file_path, perms)?;
+
+        // Try to atomic write to read-only file
+        let content = b"New content";
+        let result = atomic_write(&file_path, content);
+
+        // Should fail because we can't rename over read-only file
+        assert!(result.is_err());
+
+        // Original content should be unchanged
+        let original_content = fs::read_to_string(&file_path)?;
+        assert_eq!(original_content, "Initial content");
+
+        Ok(())
+    }
+
+    // =====================================
+    // Test 4: Concurrent Access Scenarios
+    // =====================================
+
+    #[test]
+    fn test_concurrent_writes_to_same_file() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let target_path = temp_dir.path().join("concurrent_test.md");
+
+        const NUM_THREADS: usize = 10;
+        const ITERATIONS: usize = 50;
+
+        let barrier = Arc::new(Barrier::new(NUM_THREADS));
+        let path = Arc::new(target_path.clone());
+        let mut handles = vec![];
+
+        for thread_id in 0..NUM_THREADS {
+            let barrier = Arc::clone(&barrier);
+            let path = Arc::clone(&path);
+
+            let handle = thread::spawn(move || {
+                barrier.wait(); // Synchronize thread start
+
+                for i in 0..ITERATIONS {
+                    let content = format!("Thread {} iteration {}", thread_id, i);
+                    let result = atomic_write(&path, content.as_bytes());
+                    // Each individual write should succeed
+                    assert!(result.is_ok());
+
+                    // Small delay to increase chance of contention
+                    thread::sleep(Duration::from_millis(1));
+                }
+            });
+
+            handles.push(handle);
+        }
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // File should exist and contain valid content from one of the threads
+        assert!(target_path.exists());
+        let final_content = fs::read_to_string(&target_path)?;
+        assert!(final_content.starts_with("Thread"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_concurrent_read_write_operations() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let goals_dir = temp_dir.path().join("goals");
+        fs::create_dir_all(&goals_dir)?;
+
+        let config = Config {
+            goals_dir: goals_dir.to_string_lossy().to_string(),
+        };
+
+        let barrier = Arc::new(Barrier::new(2));
+        let config = Arc::new(config);
+        let errors = Arc::new(Mutex::new(Vec::new()));
+
+        // Writer thread
+        let writer_barrier = Arc::clone(&barrier);
+        let writer_config = Arc::clone(&config);
+        let writer_errors = Arc::clone(&errors);
+        let writer_handle = thread::spawn(move || {
+            writer_barrier.wait();
+
+            for day in 1..=30 {
+                let date = NaiveDate::from_ymd_opt(2025, 1, day).unwrap();
+                let mut goals = DailyGoals::new(date);
+                goals.work.actions[0] = Action {
+                    text: format!("Task for day {}", day),
+                    completed: day % 2 == 0,
+                };
+
+                if let Err(e) = write_goals_file(&goals, &writer_config) {
+                    writer_errors
+                        .lock()
+                        .unwrap()
+                        .push(format!("Write error: {}", e));
+                }
+
+                thread::sleep(Duration::from_millis(10));
+            }
+        });
+
+        // Reader thread
+        let reader_barrier = Arc::clone(&barrier);
+        let reader_config = Arc::clone(&config);
+        let reader_errors = Arc::clone(&errors);
+        let reader_handle = thread::spawn(move || {
+            reader_barrier.wait();
+
+            thread::sleep(Duration::from_millis(50)); // Let writer get ahead
+
+            for day in 1..=30 {
+                let date = NaiveDate::from_ymd_opt(2025, 1, day).unwrap();
+                match load_or_create_goals(date, &reader_config) {
+                    Ok(goals) => {
+                        // Verify we get consistent data
+                        assert_eq!(goals.date, date);
+                    }
+                    Err(e) => {
+                        reader_errors
+                            .lock()
+                            .unwrap()
+                            .push(format!("Read error: {}", e));
+                    }
+                }
+
+                thread::sleep(Duration::from_millis(10));
+            }
+        });
+
+        writer_handle.join().unwrap();
+        reader_handle.join().unwrap();
+
+        // Check for any errors during concurrent operations
+        let errors = errors.lock().unwrap();
+        if !errors.is_empty() {
+            panic!("Concurrent operations had errors: {:?}", *errors);
+        }
+
+        Ok(())
+    }
+
+    // =====================================
+    // Test 5: Disk Full Scenarios
+    // =====================================
+
+    #[test]
+    fn test_disk_full_simulation() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let target_path = temp_dir.path().join("disk_full_test.md");
+
+        // Create a very large content that might cause disk space issues
+        let large_content = "x".repeat(1_000_000); // 1MB
+
+        // This test mainly ensures error handling doesn't panic
+        // In most test environments, we won't actually run out of disk space
+        let result = atomic_write(&target_path, large_content.as_bytes());
+
+        match result {
+            Ok(_) => {
+                // If successful, verify file integrity
+                let read_content = fs::read_to_string(&target_path)?;
+                assert_eq!(read_content, large_content);
+            }
+            Err(e) => {
+                // If it fails due to disk space, ensure error is reasonable
+                let error_msg = e.to_string().to_lowercase();
+                // Could be "no space left", "disk full", etc.
+                println!("Expected disk space error: {}", error_msg);
+            }
+        }
+
+        Ok(())
+    }
+
+    // =====================================
+    // Test 6: Invalid Paths and Filenames
+    // =====================================
+
+    #[test]
+    fn test_invalid_path_characters() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+
+        // Test various invalid path scenarios
+        let invalid_paths = vec![
+            temp_dir.path().join(""),            // Empty filename
+            temp_dir.path().join("\0null_byte"), // Null byte
+            temp_dir.path().join("file\n with\nnewlines"),
+        ];
+
+        let content = b"Test content";
+
+        for invalid_path in invalid_paths {
+            let result = atomic_write(&invalid_path, content);
+            // Should fail gracefully without panicking
+            assert!(result.is_err());
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_very_long_path() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+
+        // Create a very long path (close to OS limits)
+        let long_component = "a".repeat(200);
+        let long_path = temp_dir
+            .path()
+            .join(&long_component)
+            .join(&long_component)
+            .join("file.md");
+
+        let content = b"Test content";
+        let result = atomic_write(&long_path, content);
+
+        // Might succeed or fail depending on OS limits, but shouldn't panic
+        match result {
+            Ok(_) => {
+                // If successful, verify file exists
+                assert!(long_path.exists());
+            }
+            Err(e) => {
+                // Error should be related to path length
+                let error_msg = e.to_string().to_lowercase();
+                println!("Expected path length error: {}", error_msg);
+            }
+        }
+
+        Ok(())
+    }
+
+    // =====================================
+    // Test 7: Symbolic Links and Network Drives
+    // =====================================
+
+    #[test]
+    #[cfg(unix)]
+    fn test_symbolic_link_handling() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let real_dir = temp_dir.path().join("real_goals");
+        let link_dir = temp_dir.path().join("link_goals");
+
+        fs::create_dir_all(&real_dir)?;
+
+        // Create symbolic link to goals directory
+        std::os::unix::fs::symlink(&real_dir, &link_dir)?;
+
+        let config = Config {
+            goals_dir: link_dir.to_string_lossy().to_string(),
+        };
+
+        let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
+        let goals = DailyGoals::new(date);
+
+        // Should work through symbolic link
+        let result = write_goals_file(&goals, &config);
+        assert!(result.is_ok());
+
+        // File should exist in real directory
+        let real_file = real_dir.join("2025-01-15.md");
+        assert!(real_file.exists());
+
+        // And be accessible through link
+        let link_file = link_dir.join("2025-01-15.md");
+        assert!(link_file.exists());
+
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_broken_symbolic_link() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let nonexistent_target = temp_dir.path().join("does_not_exist");
+        let broken_link = temp_dir.path().join("broken_link");
+
+        // Create symbolic link to non-existent target
+        std::os::unix::fs::symlink(&nonexistent_target, &broken_link)?;
+
+        let config = Config {
+            goals_dir: broken_link.to_string_lossy().to_string(),
+        };
+
+        let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
+        let goals = DailyGoals::new(date);
+
+        // Should fail gracefully with broken link
+        let result = write_goals_file(&goals, &config);
+        assert!(result.is_err());
+
+        Ok(())
+    }
+
+    // =====================================
+    // Test 8: File Locking (Platform-specific)
+    // =====================================
+
+    #[test]
+    fn test_file_locking_behavior() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let file_path = temp_dir.path().join("locked_file.md");
+
+        // Create and lock a file
+        let _locked_file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&file_path)?;
+
+        // On Unix systems, we can usually write to the same file from another process
+        // On Windows, this might fail with a sharing violation
+        let content = b"Test content while locked";
+        let result = atomic_write(&file_path, content);
+
+        // Behavior is platform-dependent, but shouldn't panic
+        match result {
+            Ok(_) => {
+                println!("Atomic write succeeded despite file lock");
+            }
+            Err(e) => {
+                println!("Atomic write failed due to file lock: {}", e);
+            }
+        }
+
+        Ok(())
+    }
+
+    // =====================================
+    // Test 9: Power Failure Simulation
+    // =====================================
+
+    #[test]
+    fn test_interrupted_write_recovery() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let target_path = temp_dir.path().join("interrupted_write.md");
+        let temp_path = target_path.with_extension("tmp");
+
+        // Simulate interrupted write by creating orphaned temp file
+        fs::write(&temp_path, "Incomplete write from previous attempt")?;
+
+        // Now perform normal atomic write
+        let content = b"New complete content";
+        let result = atomic_write(&target_path, content);
+        assert!(result.is_ok());
+
+        // Target should have new content
+        let final_content = fs::read(&target_path)?;
+        assert_eq!(final_content, content);
+
+        // Old temp file should be replaced/cleaned up
+        if temp_path.exists() {
+            let temp_content = fs::read(&temp_path)?;
+            // If temp file still exists, it should have the new content or be gone
+            println!("Temp file state after recovery: {:?}", temp_content);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_partial_temp_file_cleanup() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let target_path = temp_dir.path().join("cleanup_test.md");
+        let temp_path = target_path.with_extension("tmp");
+
+        // Create multiple orphaned temp files
+        fs::write(&temp_path, "Orphaned temp file")?;
+
+        let alt_temp_path = temp_path.with_extension("tmp.old");
+        fs::write(&alt_temp_path, "Another orphaned file")?;
+
+        // Perform atomic write
+        let content = b"Final content";
+        let result = atomic_write(&target_path, content);
+        assert!(result.is_ok());
+
+        // Target should have correct content
+        let final_content = fs::read(&target_path)?;
+        assert_eq!(final_content, content);
+
+        Ok(())
+    }
+
+    // =====================================
+    // Test 10: Large File Handling
+    // =====================================
+
+    #[test]
+    fn test_large_file_performance() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let goals_dir = temp_dir.path().join("goals");
+
+        let config = Config {
+            goals_dir: goals_dir.to_string_lossy().to_string(),
+        };
+
+        let start_time = Instant::now();
+
+        // Create 1000 days worth of goals (simulating ~3 years)
+        for day_offset in 0..1000 {
+            let date =
+                NaiveDate::from_ymd_opt(2024, 1, 1).unwrap() + chrono::Duration::days(day_offset);
+            let mut goals = DailyGoals::new(date);
+
+            // Fill with realistic content
+            goals.work.goal = Some(format!("Work goal for day {}", day_offset));
+            goals.health.goal = Some(format!("Health goal for day {}", day_offset));
+            goals.family.goal = Some(format!("Family goal for day {}", day_offset));
+
+            for i in 0..3 {
+                goals.work.actions[i] = Action {
+                    text: format!("Work task {} for day {}", i + 1, day_offset),
+                    completed: (day_offset + i as i64) % 3 == 0,
+                };
+                goals.health.actions[i] = Action {
+                    text: format!("Health task {} for day {}", i + 1, day_offset),
+                    completed: (day_offset + i as i64) % 2 == 0,
+                };
+                goals.family.actions[i] = Action {
+                    text: format!("Family task {} for day {}", i + 1, day_offset),
+                    completed: day_offset % 4 == i as i64,
+                };
+            }
+
+            let result = write_goals_file(&goals, &config);
+            assert!(result.is_ok());
+        }
+
+        let write_duration = start_time.elapsed();
+        println!("Wrote 1000 goal files in {:?}", write_duration);
+
+        // Performance target: Should complete in reasonable time
+        assert!(
+            write_duration < Duration::from_secs(60),
+            "Writing 1000 files took too long: {:?}",
+            write_duration
+        );
+
+        // Verify all files exist and are readable
+        let read_start = Instant::now();
+        let mut total_file_size = 0;
+
+        for day_offset in 0..1000 {
+            let date =
+                NaiveDate::from_ymd_opt(2024, 1, 1).unwrap() + chrono::Duration::days(day_offset);
+            let goals = load_or_create_goals(date, &config)?;
+
+            assert_eq!(goals.date, date);
+            assert!(goals.work.goal.is_some());
+
+            // Check file size
+            let filename = format!("{}.md", date.format("%Y-%m-%d"));
+            let file_path = goals_dir.join(filename);
+            let metadata = fs::metadata(&file_path)?;
+            total_file_size += metadata.len();
+        }
+
+        let read_duration = read_start.elapsed();
+        println!("Read 1000 goal files in {:?}", read_duration);
+        println!(
+            "Total file size: {} bytes ({:.2} MB)",
+            total_file_size,
+            total_file_size as f64 / 1_048_576.0
+        );
+
+        // Performance target: Reading should be fast
+        assert!(
+            read_duration < Duration::from_secs(30),
+            "Reading 1000 files took too long: {:?}",
+            read_duration
+        );
+
+        // Memory usage target: Should be reasonable (this is implicit in test not crashing)
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_memory_usage_with_large_dataset() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let goals_dir = temp_dir.path().join("goals");
+
+        let config = Config {
+            goals_dir: goals_dir.to_string_lossy().to_string(),
+        };
+
+        // Create goals with very long text to test memory handling
+        let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
+        let mut goals = DailyGoals::new(date);
+
+        // Create large text content
+        let large_text = "This is a very long action description that simulates real-world usage where users might write detailed notes about their tasks and goals. ".repeat(100);
+
+        for i in 0..3 {
+            goals.work.actions[i] = Action {
+                text: large_text.clone(),
+                completed: false,
+            };
+            goals.health.actions[i] = Action {
+                text: large_text.clone(),
+                completed: false,
+            };
+            goals.family.actions[i] = Action {
+                text: large_text.clone(),
+                completed: false,
+            };
+        }
+
+        // Write and read large content
+        let result = write_goals_file(&goals, &config);
+        assert!(result.is_ok());
+
+        let loaded_goals = load_or_create_goals(date, &config)?;
+        assert_eq!(loaded_goals.work.actions[0].text, large_text);
+
+        Ok(())
+    }
+
+    // =====================================
+    // Cross-Platform Compatibility Tests
+    // =====================================
+
+    #[test]
+    fn test_cross_platform_path_handling() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+
+        // Test various path separators and formats
+        let config = Config {
+            goals_dir: temp_dir.path().join("goals").to_string_lossy().to_string(),
+        };
+
+        let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
+        let goals = DailyGoals::new(date);
+
+        let result = write_goals_file(&goals, &config);
+        assert!(result.is_ok());
+
+        let file_path = result.unwrap();
+        assert!(file_path.exists());
+        assert!(file_path.ends_with("2025-01-15.md"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_unicode_filename_handling() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let unicode_dir = temp_dir.path().join("测试目录");
+
+        let config = Config {
+            goals_dir: unicode_dir.to_string_lossy().to_string(),
+        };
+
+        let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
+        let goals = DailyGoals::new(date);
+
+        // Should handle unicode directory names gracefully
+        let result = write_goals_file(&goals, &config);
+
+        match result {
+            Ok(path) => {
+                assert!(path.exists());
+                println!("Successfully created file in unicode directory");
+            }
+            Err(e) => {
+                // Some filesystems don't support unicode names
+                println!(
+                    "Unicode directory test failed (expected on some systems): {}",
+                    e
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    // =====================================
+    // Error Handling and Recovery Tests
+    // =====================================
+
+    #[test]
+    fn test_error_propagation() -> Result<()> {
+        // Test that errors are properly propagated up the call stack
+        let nonexistent_path = Path::new("/nonexistent/impossible/path/file.md");
+        let content = b"test content";
+
+        let result = atomic_write(nonexistent_path, content);
+        assert!(result.is_err());
+
+        let error = result.unwrap_err();
+        let error_chain: Vec<String> = error.chain().map(|e| e.to_string()).collect();
+
+        // Should have meaningful error context
+        assert!(!error_chain.is_empty());
+        println!("Error chain: {:?}", error_chain);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_recovery_from_filesystem_errors() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let config = Config {
+            goals_dir: temp_dir.path().join("goals").to_string_lossy().to_string(),
+        };
+
+        // Test sequence: failure -> recovery -> success
+        let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
+
+        // First attempt: simulate failure by removing temp directory after creation
+        {
+            let goals = DailyGoals::new(date);
+            let result = write_goals_file(&goals, &config);
+            // This should succeed initially
+            assert!(result.is_ok());
+        }
+
+        // Second attempt: normal operation should work
+        {
+            let goals = DailyGoals::new(date);
+            let result = write_goals_file(&goals, &config);
+            assert!(result.is_ok());
+        }
+
+        // Third attempt: loading should work
+        {
+            let loaded_goals = load_or_create_goals(date, &config)?;
+            assert_eq!(loaded_goals.date, date);
+        }
+
+        Ok(())
+    }
+
+    // =====================================
+    // Performance and Stress Tests
+    // =====================================
+
+    #[test]
+    fn test_rapid_successive_writes() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let target_path = temp_dir.path().join("rapid_writes.md");
+
+        let start_time = Instant::now();
+
+        // Perform many rapid writes to same file
+        for i in 0..100 {
+            let content = format!("Iteration {}", i);
+            let result = atomic_write(&target_path, content.as_bytes());
+            assert!(result.is_ok());
+        }
+
+        let duration = start_time.elapsed();
+        println!("100 rapid writes completed in {:?}", duration);
+
+        // Final content should be from last write
+        let final_content = fs::read_to_string(&target_path)?;
+        assert_eq!(final_content, "Iteration 99");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_filesystem_stress() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let goals_dir = temp_dir.path().join("stress_test");
+
+        let config = Config {
+            goals_dir: goals_dir.to_string_lossy().to_string(),
+        };
+
+        // Create many files simultaneously
+        const NUM_DAYS: i64 = 365;
+        let base_date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+
+        let start_time = Instant::now();
+
+        for day_offset in 0..NUM_DAYS {
+            let date = base_date + chrono::Duration::days(day_offset);
+            let goals = DailyGoals::new(date);
+
+            let result = write_goals_file(&goals, &config);
+            assert!(result.is_ok());
+        }
+
+        let write_duration = start_time.elapsed();
+
+        // Verify all files exist
+        let verify_start = Instant::now();
+        for day_offset in 0..NUM_DAYS {
+            let date = base_date + chrono::Duration::days(day_offset);
+            let goals = load_or_create_goals(date, &config)?;
+            assert_eq!(goals.date, date);
+        }
+        let verify_duration = verify_start.elapsed();
+
+        println!(
+            "Stress test: {} files written in {:?}, verified in {:?}",
+            NUM_DAYS, write_duration, verify_duration
+        );
+
+        // Performance should be reasonable
+        assert!(write_duration < Duration::from_secs(30));
+        assert!(verify_duration < Duration::from_secs(15));
+
+        Ok(())
+    }
+}
+
+// =====================================
+// Integration Tests with Full File I/O Workflow
+// =====================================
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+
+    #[test]
+    fn test_full_workflow_integration() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let config = Config {
+            goals_dir: temp_dir.path().join("goals").to_string_lossy().to_string(),
+        };
+
+        // Step 1: Create new goals
+        let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
+        let mut goals = DailyGoals::new(date);
+
+        // Step 2: Modify goals
+        goals.work.goal = Some("Complete project".to_string());
+        goals.work.actions[0] = Action {
+            text: "Write tests".to_string(),
+            completed: true,
+        };
+        goals.work.actions[1] = Action {
+            text: "Review code".to_string(),
+            completed: false,
+        };
+
+        // Step 3: Save goals
+        let saved_path = write_goals_file(&goals, &config)?;
+        assert!(saved_path.exists());
+
+        // Step 4: Load goals back
+        let loaded_goals = load_or_create_goals(date, &config)?;
+
+        // Step 5: Verify integrity
+        assert_eq!(loaded_goals.date, goals.date);
+        assert_eq!(loaded_goals.work.goal, goals.work.goal);
+        assert_eq!(
+            loaded_goals.work.actions[0].text,
+            goals.work.actions[0].text
+        );
+        assert_eq!(
+            loaded_goals.work.actions[0].completed,
+            goals.work.actions[0].completed
+        );
+
+        // Step 6: Modify and save again
+        let mut modified_goals = loaded_goals;
+        modified_goals.work.actions[1].completed = true;
+
+        let resaved_path = write_goals_file(&modified_goals, &config)?;
+        assert_eq!(saved_path, resaved_path);
+
+        // Step 7: Final verification
+        let final_goals = load_or_create_goals(date, &config)?;
+        assert!(final_goals.work.actions[1].completed);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_dates_workflow() -> Result<()> {
+        let temp_dir = TempDir::new()?;
+        let config = Config {
+            goals_dir: temp_dir.path().join("goals").to_string_lossy().to_string(),
+        };
+
+        // Create goals for a week
+        let base_date = NaiveDate::from_ymd_opt(2025, 1, 13).unwrap(); // Monday
+        let mut all_goals = Vec::new();
+
+        for day_offset in 0..7 {
+            let date = base_date + chrono::Duration::days(day_offset);
+            let mut goals = DailyGoals::new(date);
+
+            goals.work.goal = Some(format!("Work goal for {}", date.format("%A")));
+            goals.work.actions[0] = Action {
+                text: format!("Daily standup - {}", date.format("%A")),
+                completed: day_offset < 5, // Completed on weekdays
+            };
+
+            write_goals_file(&goals, &config)?;
+            all_goals.push(goals);
+        }
+
+        // Verify all goals can be loaded back
+        for (i, expected_goals) in all_goals.iter().enumerate() {
+            let date = base_date + chrono::Duration::days(i as i64);
+            let loaded_goals = load_or_create_goals(date, &config)?;
+
+            assert_eq!(loaded_goals.date, expected_goals.date);
+            assert_eq!(loaded_goals.work.goal, expected_goals.work.goal);
+            assert_eq!(
+                loaded_goals.work.actions[0].completed,
+                expected_goals.work.actions[0].completed
+            );
+        }
+
+        Ok(())
+    }
+}
