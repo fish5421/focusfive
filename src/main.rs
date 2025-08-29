@@ -20,6 +20,7 @@ fn main() -> Result<()> {
         eprintln!("Using current directory for goals");
         Config {
             goals_dir: "./FocusFive/goals".to_string(),
+            data_root: "./FocusFive".to_string(),
         }
     });
 
@@ -75,17 +76,34 @@ fn run_app<B: ratatui::backend::Backend>(
                 Event::Key(key) => {
                     app.handle_key(key)?;
 
-                    // Save if needed
+                    // Save if needed - Goals first as they are the primary data
                     if app.needs_save {
                         match data::write_goals_file(&app.goals, config) {
                             Ok(_) => {
                                 app.needs_save = false;
                                 // Update streak after successful save
                                 app.update_streak();
+                                // Also mark metadata for save when goals are saved
+                                app.day_meta.reconcile_with_goals(&app.goals);
+                                app.meta_needs_save = true;
                             }
                             Err(e) => {
                                 app.set_error(format!("Failed to save: {}", e));
                                 app.needs_save = false; // Reset to avoid infinite retry
+                            }
+                        }
+                    }
+                    
+                    // Save metadata if needed
+                    if app.meta_needs_save {
+                        match data::save_day_meta(app.goals.date, &app.day_meta, config) {
+                            Ok(_) => {
+                                app.meta_needs_save = false;
+                            }
+                            Err(e) => {
+                                // Metadata save failure is non-critical, just log it
+                                eprintln!("Warning: Failed to save metadata: {}", e);
+                                app.meta_needs_save = false;
                             }
                         }
                     }
@@ -103,6 +121,45 @@ fn run_app<B: ratatui::backend::Backend>(
                         }
                     }
 
+                    // Save templates if needed
+                    if app.templates_needs_save {
+                        match data::save_templates(&app.templates, config) {
+                            Ok(_) => {
+                                app.templates_needs_save = false;
+                            }
+                            Err(e) => {
+                                app.set_error(format!("Failed to save templates: {}", e));
+                                app.templates_needs_save = false; // Reset to avoid infinite retry
+                            }
+                        }
+                    }
+
+                    // Save objectives if needed (using atomic_write internally)
+                    if app.objectives_needs_save {
+                        match data::save_objectives(&app.objectives, config) {
+                            Ok(_) => {
+                                app.objectives_needs_save = false;
+                            }
+                            Err(e) => {
+                                app.set_error(format!("Failed to save objectives: {}", e));
+                                app.objectives_needs_save = false; // Reset to avoid infinite retry
+                            }
+                        }
+                    }
+
+                    // Save indicators if needed (using atomic_write internally)
+                    if app.indicators_needs_save {
+                        match data::save_indicators(&app.indicators, config) {
+                            Ok(_) => {
+                                app.indicators_needs_save = false;
+                            }
+                            Err(e) => {
+                                app.set_error(format!("Failed to save indicators: {}", e));
+                                app.indicators_needs_save = false; // Reset to avoid infinite retry
+                            }
+                        }
+                    }
+
                     // Check if we should quit
                     if app.should_quit {
                         // Save any pending changes before quitting
@@ -110,10 +167,35 @@ fn run_app<B: ratatui::backend::Backend>(
                             if let Err(e) = data::write_goals_file(&app.goals, config) {
                                 eprintln!("Warning: Failed to save changes: {}", e);
                             }
+                            // Also save metadata
+                            app.day_meta.reconcile_with_goals(&app.goals);
+                            if let Err(e) = data::save_day_meta(app.goals.date, &app.day_meta, config) {
+                                eprintln!("Warning: Failed to save metadata: {}", e);
+                            }
+                        }
+                        if app.meta_needs_save {
+                            if let Err(e) = data::save_day_meta(app.goals.date, &app.day_meta, config) {
+                                eprintln!("Warning: Failed to save metadata: {}", e);
+                            }
                         }
                         if app.vision_needs_save {
                             if let Err(e) = data::save_vision(&app.vision, config) {
                                 eprintln!("Warning: Failed to save vision: {}", e);
+                            }
+                        }
+                        if app.templates_needs_save {
+                            if let Err(e) = data::save_templates(&app.templates, config) {
+                                eprintln!("Warning: Failed to save templates: {}", e);
+                            }
+                        }
+                        if app.objectives_needs_save {
+                            if let Err(e) = data::save_objectives(&app.objectives, config) {
+                                eprintln!("Warning: Failed to save objectives: {}", e);
+                            }
+                        }
+                        if app.indicators_needs_save {
+                            if let Err(e) = data::save_indicators(&app.indicators, config) {
+                                eprintln!("Warning: Failed to save indicators: {}", e);
                             }
                         }
                         break;

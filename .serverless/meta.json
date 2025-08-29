@@ -1,6 +1,6 @@
 {
   "unknown": {
-    "versionFramework": "4.18.0",
+    "versionFramework": "4.18.1",
     "dashboard": {
       "isEnabledForService": false,
       "requiredAuthentication": false,

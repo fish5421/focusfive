@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use chrono::{Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -10,11 +10,43 @@ pub const MAX_VISION_LENGTH: usize = 1000;
 /// A single action item with completion status
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Action {
+    #[serde(default = "Action::generate_id")]
+    pub id: String,             // UUID for stable identification
     pub text: String,
     pub completed: bool,
+    #[serde(default = "chrono::Utc::now")]
+    pub created: chrono::DateTime<chrono::Utc>,
+    #[serde(default = "chrono::Utc::now")] 
+    pub modified: chrono::DateTime<chrono::Utc>,
 }
 
 impl Action {
+    /// Generate a new UUID for an action
+    fn generate_id() -> String {
+        uuid::Uuid::new_v4().to_string()
+    }
+
+    /// Create a new empty action with default values
+    pub fn new_empty() -> Self {
+        let now = chrono::Utc::now();
+        Action {
+            id: Self::generate_id(),
+            text: String::new(),
+            completed: false,
+            created: now,
+            modified: now,
+        }
+    }
+
+    /// Create an action from markdown parsing (preserves completion status)
+    pub fn from_markdown(text: String, completed: bool) -> Self {
+        let mut action = Self::new(text);
+        action.completed = completed;
+        // Status will be set by metadata reconciliation
+        action
+    }
+
+    /// Create a new action with text
     pub fn new(mut text: String) -> Self {
         // Truncate if too long
         if text.len() > MAX_ACTION_LENGTH {
@@ -25,16 +57,20 @@ impl Action {
             );
             text.truncate(MAX_ACTION_LENGTH);
         }
-
-        Self {
+        
+        let now = chrono::Utc::now();
+        Action {
+            id: Self::generate_id(),
             text,
             completed: false,
+            created: now,
+            modified: now,
         }
     }
 }
 
 /// The three life outcome areas - fixed enum to enforce exactly 3
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum OutcomeType {
     Work,
     Health,
@@ -359,6 +395,388 @@ impl ActionTemplates {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub goals_dir: String,
+    pub data_root: String,  // NEW: parent directory for JSON/NDJSON stores
+}
+
+/// Action metadata stored in sidecar JSON files
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionMeta {
+    pub id: String,  // UUID as string
+    pub status: ActionMetaStatus,
+    pub origin: ActionOrigin,
+    pub estimated_min: Option<u32>,
+    pub actual_min: Option<u32>,
+    pub priority: Option<u32>,
+    pub tags: Vec<String>,
+    pub objective_id: Option<String>,  // Link to objective UUID
+}
+
+impl Default for ActionMeta {
+    fn default() -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            status: ActionMetaStatus::Planned,
+            origin: ActionOrigin::Manual,
+            estimated_min: None,
+            actual_min: None,
+            priority: None,
+            tags: Vec::new(),
+            objective_id: None,
+        }
+    }
+}
+
+/// Status for rich action tracking
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ActionMetaStatus {
+    Planned,
+    InProgress,
+    Done,
+    Skipped,
+    Blocked,
+}
+
+/// Origin of an action
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ActionOrigin {
+    Manual,
+    Template,
+    CarryOver,
+}
+
+/// Day metadata stored as sidecar to markdown files
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DayMeta {
+    pub version: u32,
+    pub work: Vec<ActionMeta>,
+    pub health: Vec<ActionMeta>,
+    pub family: Vec<ActionMeta>,
+    pub created: chrono::DateTime<chrono::Utc>,
+    pub modified: chrono::DateTime<chrono::Utc>,
+}
+
+impl DayMeta {
+    /// Create new DayMeta aligned with the given goals
+    pub fn from_goals(goals: &DailyGoals) -> Self {
+        let now = chrono::Utc::now();
+        Self {
+            version: 1,
+            work: goals.work.actions.iter().map(|action| {
+                let mut meta = ActionMeta::default();
+                meta.id = action.id.clone();
+                meta.status = if action.completed {
+                    ActionMetaStatus::Done
+                } else {
+                    ActionMetaStatus::Planned
+                };
+                meta
+            }).collect(),
+            health: goals.health.actions.iter().map(|action| {
+                let mut meta = ActionMeta::default();
+                meta.id = action.id.clone();
+                meta.status = if action.completed {
+                    ActionMetaStatus::Done
+                } else {
+                    ActionMetaStatus::Planned
+                };
+                meta
+            }).collect(),
+            family: goals.family.actions.iter().map(|action| {
+                let mut meta = ActionMeta::default();
+                meta.id = action.id.clone();
+                meta.status = if action.completed {
+                    ActionMetaStatus::Done
+                } else {
+                    ActionMetaStatus::Planned
+                };
+                meta
+            }).collect(),
+            created: now,
+            modified: now,
+        }
+    }
+    
+    /// Reconcile metadata with current action counts
+    pub fn reconcile_with_goals(&mut self, goals: &DailyGoals) {
+        Self::reconcile_outcome_meta(&mut self.work, &goals.work);
+        Self::reconcile_outcome_meta(&mut self.health, &goals.health);
+        Self::reconcile_outcome_meta(&mut self.family, &goals.family);
+        self.modified = chrono::Utc::now();
+    }
+    
+    fn reconcile_outcome_meta(meta_vec: &mut Vec<ActionMeta>, outcome: &Outcome) {
+        let target_len = outcome.actions.len();
+        let current_len = meta_vec.len();
+        
+        if current_len < target_len {
+            // Add new metadata entries for new actions
+            for i in current_len..target_len {
+                let action = &outcome.actions[i];
+                let mut meta = ActionMeta::default();
+                
+                // Use the action's ID if it has one, otherwise generate new
+                meta.id = action.id.clone();
+                
+                // Set status based on completion
+                meta.status = if action.completed {
+                    ActionMetaStatus::Done
+                } else {
+                    ActionMetaStatus::Planned
+                };
+                
+                meta_vec.push(meta);
+            }
+        } else if current_len > target_len {
+            // Truncate excess metadata
+            meta_vec.truncate(target_len);
+        }
+        
+        // Ensure IDs are synced for existing entries
+        for (i, action) in outcome.actions.iter().enumerate() {
+            if i < meta_vec.len() {
+                // Preserve the action's ID
+                meta_vec[i].id = action.id.clone();
+                
+                // Update status if action completion changed but metadata hasn't been manually edited
+                if action.completed && meta_vec[i].status == ActionMetaStatus::Planned {
+                    meta_vec[i].status = ActionMetaStatus::Done;
+                } else if !action.completed && meta_vec[i].status == ActionMetaStatus::Done {
+                    // If unchecked, revert to Planned unless it's in progress or blocked
+                    if meta_vec[i].status != ActionMetaStatus::InProgress 
+                        && meta_vec[i].status != ActionMetaStatus::Blocked {
+                        meta_vec[i].status = ActionMetaStatus::Planned;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Status of an objective
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ObjectiveStatus {
+    Active,
+    Paused,
+    Completed,
+    Dropped,
+}
+
+/// Long-term objective that can be linked to daily actions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Objective {
+    pub id: String,                             // UUID as string
+    pub domain: OutcomeType,                    // Work|Health|Family
+    pub title: String,                          // Brief title
+    pub description: Option<String>,            // Detailed description
+    pub start: NaiveDate,                       // Start date
+    pub end: Option<NaiveDate>,                 // End date (optional for open-ended)
+    pub status: ObjectiveStatus,                // Current status
+    pub created: chrono::DateTime<chrono::Utc>, // Creation timestamp
+    pub modified: chrono::DateTime<chrono::Utc>,// Last modification timestamp
+    pub parent_id: Option<String>,              // For hierarchical objectives
+}
+
+impl Objective {
+    /// Create a new objective with generated UUID
+    pub fn new(domain: OutcomeType, title: String) -> Self {
+        let now = chrono::Utc::now();
+        Objective {
+            id: uuid::Uuid::new_v4().to_string(),
+            domain,
+            title,
+            description: None,
+            start: Local::now().date_naive(),
+            end: None,
+            status: ObjectiveStatus::Active,
+            created: now,
+            modified: now,
+            parent_id: None,
+        }
+    }
+}
+
+/// Root structure for objectives.json
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObjectivesData {
+    pub version: u32,
+    pub objectives: Vec<Objective>,
+}
+
+impl Default for ObjectivesData {
+    fn default() -> Self {
+        ObjectivesData {
+            version: 1,
+            objectives: Vec::new(),
+        }
+    }
+}
+
+/// Kind of indicator (leading or lagging)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum IndicatorKind {
+    Leading,
+    Lagging,
+}
+
+/// Unit of measurement for indicators
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
+pub enum IndicatorUnit {
+    Count,
+    Minutes,
+    Dollars,
+    Percent,
+    Custom(String),
+}
+
+/// Direction for indicator optimization
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum IndicatorDirection {
+    HigherIsBetter,
+    LowerIsBetter,
+    WithinRange,
+}
+
+/// Definition of a key performance indicator
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndicatorDef {
+    pub id: String,                             // UUID as string
+    pub name: String,                           // Human-readable name
+    pub kind: IndicatorKind,                    // Leading or Lagging
+    pub unit: IndicatorUnit,                    // Unit of measurement
+    pub objective_id: Option<String>,           // Link to objective
+    pub target: Option<f64>,                     // Target value
+    pub direction: IndicatorDirection,          // Optimization direction
+    pub active: bool,                           // Is indicator active
+    pub created: chrono::DateTime<chrono::Utc>, // Creation timestamp
+    pub modified: chrono::DateTime<chrono::Utc>,// Last modification
+    pub lineage_of: Option<String>,             // Previous version ID
+    pub notes: Option<String>,                   // Additional notes
+}
+
+impl IndicatorDef {
+    /// Create a new indicator with generated UUID
+    pub fn new(name: String, kind: IndicatorKind, unit: IndicatorUnit) -> Self {
+        let now = chrono::Utc::now();
+        IndicatorDef {
+            id: uuid::Uuid::new_v4().to_string(),
+            name,
+            kind,
+            unit,
+            objective_id: None,
+            target: None,
+            direction: IndicatorDirection::HigherIsBetter,
+            active: true,
+            created: now,
+            modified: now,
+            lineage_of: None,
+            notes: None,
+        }
+    }
+}
+
+/// Root structure for indicators.json
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndicatorsData {
+    pub version: u32,
+    pub indicators: Vec<IndicatorDef>,
+}
+
+impl Default for IndicatorsData {
+    fn default() -> Self {
+        IndicatorsData {
+            version: 1,
+            indicators: Vec::new(),
+        }
+    }
+}
+
+/// Source of an observation
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ObservationSource {
+    Manual,
+    Automated,
+    Import,
+}
+
+/// A single observation/measurement for an indicator
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Observation {
+    pub id: String,                             // UUID as string
+    pub indicator_id: String,                   // Which indicator
+    pub when: NaiveDate,                        // Date of observation
+    pub value: f64,                             // Observed value
+    pub unit: IndicatorUnit,                    // Unit (should match indicator)
+    pub source: ObservationSource,              // How was it recorded
+    pub action_id: Option<String>,              // Link to action that produced it
+    pub note: Option<String>,                    // Optional note
+    pub created: chrono::DateTime<chrono::Utc>, // When recorded
+}
+
+impl Observation {
+    /// Create a new observation
+    pub fn new(indicator_id: String, when: NaiveDate, value: f64, unit: IndicatorUnit) -> Self {
+        Observation {
+            id: uuid::Uuid::new_v4().to_string(),
+            indicator_id,
+            when,
+            value,
+            unit,
+            source: ObservationSource::Manual,
+            action_id: None,
+            note: None,
+            created: chrono::Utc::now(),
+        }
+    }
+}
+
+/// Period type for reviews
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ReviewPeriod {
+    Weekly,
+    Monthly,
+    Quarterly,
+}
+
+/// A decision made during a review
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Decision {
+    pub summary: String,                   // Brief summary of decision
+    pub objective_id: Option<String>,      // Link to objective
+    pub indicator_id: Option<String>,      // Link to indicator
+    pub rationale: Option<String>,         // Reasoning behind decision
+}
+
+/// Weekly review data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Review {
+    pub id: String,                             // UUID as string
+    pub date: NaiveDate,                        // Date of review
+    pub period: ReviewPeriod,                   // Review period type
+    pub notes: Option<String>,                  // General notes
+    pub score_1_to_5: u8,                       // Self-assessment score
+    pub decisions: Vec<Decision>,               // Decisions made
+}
+
+impl Review {
+    /// Create a new weekly review
+    pub fn new(date: NaiveDate) -> Self {
+        Review {
+            id: uuid::Uuid::new_v4().to_string(),
+            date,
+            period: ReviewPeriod::Weekly,
+            notes: None,
+            score_1_to_5: 3, // Default to middle score
+            decisions: Vec::new(),
+        }
+    }
+}
+
+/// Root structure for review JSON files
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewData {
+    pub version: u32,
+    pub review: Review,
 }
 
 impl Config {
@@ -380,13 +798,35 @@ impl Config {
                 .to_string()
         };
 
-        Ok(Self { goals_dir })
+        // macOS-friendly data_root preference
+        let data_root = if cfg!(target_os = "macos") {
+            if let Some(proj) = directories::ProjectDirs::from("com", "Correia", "FocusFive") {
+                proj.data_dir().to_string_lossy().to_string()
+            } else {
+                // fallback to parent of goals_dir
+                std::path::Path::new(&goals_dir)
+                    .parent()
+                    .unwrap_or(std::path::Path::new(&goals_dir))
+                    .to_string_lossy()
+                    .to_string()
+            }
+        } else {
+            // non-macOS: parent of goals_dir
+            std::path::Path::new(&goals_dir)
+                .parent()
+                .unwrap_or(std::path::Path::new(&goals_dir))
+                .to_string_lossy()
+                .to_string()
+        };
+
+        Ok(Self { goals_dir, data_root })
     }
 
     /// Safe default that won't panic
     pub fn default_safe() -> Self {
         Self::new().unwrap_or_else(|_| Self {
             goals_dir: "./FocusFive/goals".to_string(),
+            data_root: "./FocusFive".to_string(),
         })
     }
 }
@@ -538,10 +978,7 @@ mod tests {
         // Set up test data
         goals.day_number = Some(42);
         goals.work.goal = Some("Complete project".to_string());
-        goals.work.actions[0] = Action {
-            text: "Write tests".to_string(),
-            completed: true,
-        };
+        goals.work.actions[0] = Action::from_markdown("Write tests".to_string(), true);
 
         // Test JSON serialization
         let json = serde_json::to_string(&goals).unwrap();
@@ -679,10 +1116,11 @@ mod tests {
     // Test 12: Edge cases and boundary conditions
     #[test]
     fn test_edge_cases() {
-        // Test with very long text
+        // Test with very long text (should be truncated to MAX_ACTION_LENGTH)
         let long_text = "a".repeat(1000);
         let action = Action::new(long_text.clone());
-        assert_eq!(action.text, long_text);
+        assert_eq!(action.text.len(), MAX_ACTION_LENGTH);
+        assert_eq!(action.text, "a".repeat(MAX_ACTION_LENGTH));
 
         // Test with empty strings
         let empty_action = Action::new(String::new());

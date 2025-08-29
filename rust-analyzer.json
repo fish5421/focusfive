@@ -1,0 +1,14 @@
+{
+  "cargo": {
+    "sysroot": "discover"
+  },
+  "checkOnSave": {
+    "enable": true,
+    "command": "check"
+  },
+  "diagnostics": {
+    "experimental": {
+      "enable": false
+    }
+  }
+}

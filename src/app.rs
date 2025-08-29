@@ -75,6 +75,12 @@ pub struct App {
     pub completion_stats: Option<crate::models::CompletionStats>, // Evening: completion statistics
     pub daily_summary: String,                 // Evening: generated summary
     pub confirm_delete: bool,                  // Confirmation flag for deleting actions
+    pub day_meta: crate::models::DayMeta,      // Rich metadata for actions
+    pub meta_needs_save: bool,                 // Flag for saving metadata
+    pub objectives: crate::models::ObjectivesData, // Long-term objectives
+    pub objectives_needs_save: bool,           // Flag for saving objectives
+    pub indicators: crate::models::IndicatorsData, // Key performance indicators
+    pub indicators_needs_save: bool,           // Flag for saving indicators
 }
 
 impl App {
@@ -116,6 +122,18 @@ impl App {
             None
         };
 
+        // Load or create day metadata aligned with current goals
+        let day_meta = crate::data::load_or_create_day_meta(goals.date, &goals, &config)
+            .unwrap_or_else(|_| crate::models::DayMeta::from_goals(&goals));
+
+        // Load or create objectives
+        let objectives = crate::data::load_or_create_objectives(&config)
+            .unwrap_or_else(|_| crate::models::ObjectivesData::default());
+
+        // Load or create indicators
+        let indicators = crate::data::load_or_create_indicators(&config)
+            .unwrap_or_else(|_| crate::models::IndicatorsData::default());
+
         Self {
             goals,
             config,
@@ -139,6 +157,12 @@ impl App {
             completion_stats,
             daily_summary: String::new(),
             confirm_delete: false,
+            day_meta,
+            meta_needs_save: false,
+            objectives,
+            objectives_needs_save: false,
+            indicators,
+            indicators_needs_save: false,
         }
     }
 
