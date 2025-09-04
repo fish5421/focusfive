@@ -12,6 +12,7 @@ fn setup_test_config() -> (focusfive::models::Config, TempDir) {
 
     let config = focusfive::models::Config {
         goals_dir: goals_dir.to_str().unwrap().to_string(),
+        data_root: temp_dir.path().to_str().unwrap().to_string(),
     };
 
     (config, temp_dir)

@@ -1,5 +1,5 @@
-use focusfive::models::{DailyGoals, Outcome, OutcomeType, Action};
 use chrono::Local;
+use focusfive::models::{Action, DailyGoals, Outcome, OutcomeType};
 
 #[test]
 fn test_dynamic_action_count_in_stats() {
@@ -47,7 +47,7 @@ fn test_dynamic_action_count_in_stats() {
     // Complete some actions
     goals.work.actions[0].completed = true;
     goals.health.actions[1].completed = true;
-    
+
     // Test 2: After completing 2 actions
     let stats = goals.completion_stats();
     assert_eq!(stats.completed, 2, "Should have 2 completed");
@@ -55,14 +55,14 @@ fn test_dynamic_action_count_in_stats() {
 
     // Add an action to work
     goals.work.add_action().unwrap();
-    
+
     // Test 3: After adding action (3 + 3 + 4 = 10 actions)
     let stats = goals.completion_stats();
     assert_eq!(stats.total, 10, "Should have 10 total after adding");
 
     // Remove an action from family
     goals.family.remove_action(3).unwrap();
-    
+
     // Test 4: After removing action (3 + 3 + 3 = 9 actions)
     let stats = goals.completion_stats();
     assert_eq!(stats.total, 9, "Should have 9 total after removing");
@@ -70,11 +70,14 @@ fn test_dynamic_action_count_in_stats() {
     // Test 5: Add max actions to health
     goals.health.add_action().unwrap();
     goals.health.add_action().unwrap();
-    
+
     // Should now have 3 + 5 + 3 = 11 actions
     let stats = goals.completion_stats();
-    assert_eq!(stats.total, 11, "Should have 11 total with max health actions");
-    
+    assert_eq!(
+        stats.total, 11,
+        "Should have 11 total with max health actions"
+    );
+
     // Test percentage calculation with variable totals
     goals.work.actions[1].completed = true;
     goals.work.actions[2].completed = true;
@@ -88,11 +91,14 @@ fn test_dynamic_action_count_in_stats() {
 #[test]
 fn test_minimum_and_maximum_actions() {
     let mut goals = DailyGoals::new(Local::now().date_naive());
-    
+
     // Start with default 3 actions per outcome
     let stats = goals.completion_stats();
-    assert_eq!(stats.total, 9, "Default should be 9 actions (3 per outcome)");
-    
+    assert_eq!(
+        stats.total, 9,
+        "Default should be 9 actions (3 per outcome)"
+    );
+
     // Remove to minimum (1 per outcome)
     goals.work.remove_action(2).unwrap();
     goals.work.remove_action(1).unwrap();
@@ -100,17 +106,23 @@ fn test_minimum_and_maximum_actions() {
     goals.health.remove_action(1).unwrap();
     goals.family.remove_action(2).unwrap();
     goals.family.remove_action(1).unwrap();
-    
+
     let stats = goals.completion_stats();
-    assert_eq!(stats.total, 3, "Minimum should be 3 actions (1 per outcome)");
-    
+    assert_eq!(
+        stats.total, 3,
+        "Minimum should be 3 actions (1 per outcome)"
+    );
+
     // Add to maximum (5 per outcome)
     for _ in 0..4 {
         goals.work.add_action().unwrap();
         goals.health.add_action().unwrap();
         goals.family.add_action().unwrap();
     }
-    
+
     let stats = goals.completion_stats();
-    assert_eq!(stats.total, 15, "Maximum should be 15 actions (5 per outcome)");
+    assert_eq!(
+        stats.total, 15,
+        "Maximum should be 15 actions (5 per outcome)"
+    );
 }

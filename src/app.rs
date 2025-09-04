@@ -1,4 +1,4 @@
-use crate::data::{get_yesterday_goals, load_or_create_templates, save_templates};
+use crate::data::{get_yesterday_goals, load_or_create_templates, save_objectives, save_templates};
 use crate::models::{
     ActionTemplates, Config, DailyGoals, FiveYearVision, OutcomeType, RitualPhase,
 };
@@ -31,7 +31,7 @@ pub enum InputMode {
     },
     CopyingFromYesterday {
         yesterday_goals: Box<DailyGoals>,
-        selections: Vec<bool>,  // Dynamic size for variable actions
+        selections: Vec<bool>, // Dynamic size for variable actions
         selection_index: usize,
     },
     TemplateSelection {
@@ -45,11 +45,45 @@ pub enum InputMode {
         buffer: String,
         outcome_type: OutcomeType,
     },
+    ObjectiveSelection {
+        domain: OutcomeType,
+        selection_index: usize,
+    },
+    ObjectiveCreation {
+        domain: OutcomeType,
+        buffer: String,
+    },
     Reflecting {
         outcome_type: OutcomeType,
         buffer: String,
         original: String,
     },
+    IndicatorManagement {
+        objective_id: String,
+        objective_title: String,
+        indicators: Vec<crate::models::IndicatorDef>,
+        selection_index: usize,
+        editing_field: Option<IndicatorEditField>,
+    },
+    IndicatorCreation {
+        objective_id: String,
+        objective_title: String,
+        field_index: usize,
+        name_buffer: String,
+        kind: crate::models::IndicatorKind,
+        unit: crate::models::IndicatorUnit,
+        unit_custom_buffer: String,
+        target_buffer: String,
+        direction: crate::models::IndicatorDirection,
+        notes_buffer: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum IndicatorEditField {
+    Name(String),
+    Target(String),
+    Notes(String),
 }
 
 pub struct App {
@@ -218,11 +252,57 @@ impl App {
                 buffer,
                 outcome_type,
             } => self.handle_template_saving_mode(key, templates, buffer, outcome_type),
+            InputMode::ObjectiveSelection {
+                domain,
+                selection_index,
+            } => self.handle_objective_selection_mode(key, domain, selection_index),
+            InputMode::ObjectiveCreation {
+                domain,
+                buffer,
+            } => self.handle_objective_creation_mode(key, domain, buffer),
             InputMode::Reflecting {
                 outcome_type,
                 buffer,
                 original,
             } => self.handle_reflecting_mode(key, outcome_type, buffer, original),
+            InputMode::IndicatorManagement {
+                objective_id,
+                objective_title,
+                indicators,
+                selection_index,
+                editing_field,
+            } => self.handle_indicator_management_mode(
+                key,
+                objective_id,
+                objective_title,
+                indicators,
+                selection_index,
+                editing_field,
+            ),
+            InputMode::IndicatorCreation {
+                objective_id,
+                objective_title,
+                field_index,
+                name_buffer,
+                kind,
+                unit,
+                unit_custom_buffer,
+                target_buffer,
+                direction,
+                notes_buffer,
+            } => self.handle_indicator_creation_mode(
+                key,
+                objective_id,
+                objective_title,
+                field_index,
+                name_buffer,
+                kind,
+                unit,
+                unit_custom_buffer,
+                target_buffer,
+                direction,
+                notes_buffer,
+            ),
         }
     }
 
@@ -297,8 +377,7 @@ impl App {
                         _ => return Ok(()),
                     };
                     if self.action_index < outcome.actions.len() {
-                        outcome.actions[self.action_index].completed =
-                            !outcome.actions[self.action_index].completed;
+                        outcome.actions[self.action_index].cycle_status();
                     }
                     self.needs_save = true;
                 }
@@ -331,7 +410,7 @@ impl App {
                     2 => &mut self.goals.family,
                     _ => return Ok(()),
                 };
-                
+
                 if let Err(e) = outcome.add_action() {
                     self.set_error(e.to_string());
                 } else {
@@ -353,7 +432,7 @@ impl App {
                         2 => &mut self.goals.family,
                         _ => return Ok(()),
                     };
-                    
+
                     if let Err(e) = outcome.remove_action(self.action_index) {
                         self.set_error(e.to_string());
                     } else {
@@ -440,7 +519,10 @@ impl App {
                         let mut index = 0;
                         for outcome in yesterday_goals.outcomes() {
                             for action in &outcome.actions {
-                                if index < total_actions && !action.text.is_empty() && !action.completed {
+                                if index < total_actions
+                                    && !action.text.is_empty()
+                                    && !action.completed
+                                {
                                     selections[index] = true;
                                 }
                                 index += 1;
@@ -477,6 +559,16 @@ impl App {
                             outcome_type,
                         };
                     }
+                }
+            }
+            KeyCode::Char('o') => {
+                // Open objective selector
+                if self.active_pane == Pane::Actions {
+                    let outcome_type = self.get_current_outcome_type();
+                    self.input_mode = InputMode::ObjectiveSelection {
+                        domain: outcome_type,
+                        selection_index: 0,
+                    };
                 }
             }
             KeyCode::Char('T') => {
@@ -532,7 +624,7 @@ impl App {
             self.input_mode = InputMode::Normal;
             return Ok(());
         }
-        
+
         match key.code {
             KeyCode::Char(c) => {
                 // Add character to buffer (respect 500 char limit)
@@ -563,7 +655,8 @@ impl App {
         original: String,
     ) -> Result<()> {
         // Check for save key combinations
-        if Self::is_save_key_combo(&key) || key.code == KeyCode::Enter || key.code == KeyCode::F(2) {
+        if Self::is_save_key_combo(&key) || key.code == KeyCode::Enter || key.code == KeyCode::F(2)
+        {
             // Save the goal
             match outcome_type {
                 OutcomeType::Work => self.goals.work.goal = Some(buffer),
@@ -673,7 +766,7 @@ impl App {
     ) -> Result<()> {
         // Calculate max index based on actual selections size
         let max_index = selections.len().saturating_sub(1);
-        
+
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => {
                 // Move down in the list
@@ -715,7 +808,10 @@ impl App {
 
                 for (outcome_idx, outcome) in yesterday_goals.outcomes().iter().enumerate() {
                     for (action_idx, action) in outcome.actions.iter().enumerate() {
-                        if action_index < selections.len() && selections[action_index] && !action.text.is_empty() {
+                        if action_index < selections.len()
+                            && selections[action_index]
+                            && !action.text.is_empty()
+                        {
                             // Copy this action to today's goals
                             let target_outcome = match outcome_idx {
                                 0 => &mut self.goals.work,
@@ -723,14 +819,17 @@ impl App {
                                 2 => &mut self.goals.family,
                                 _ => continue,
                             };
-                            
+
                             // Ensure we have room for this action
-                            if action_idx < target_outcome.actions.len() {
-                                if target_outcome.actions[action_idx].text.is_empty() {
-                                    target_outcome.actions[action_idx].text = action.text.clone();
-                                    target_outcome.actions[action_idx].completed = false;
-                                    changes_made = true;
-                                }
+                            if action_idx < target_outcome.actions.len()
+                                && target_outcome.actions[action_idx].text.is_empty()
+                            {
+                                target_outcome.actions[action_idx].text = action.text.clone();
+                                target_outcome.actions[action_idx].origin =
+                                    crate::models::ActionOrigin::CarryOver;
+                                target_outcome.actions[action_idx]
+                                    .set_status(crate::models::ActionStatus::Planned);
+                                changes_made = true;
                             }
                         }
                         action_index += 1;
@@ -824,6 +923,52 @@ impl App {
         }
     }
 
+    pub fn link_current_action_to_objective(&mut self, objective_id: Option<String>) -> Result<()> {
+        // Get current action data before mutable borrow to avoid borrow checker issues
+        let current_outcome_actions = match self.outcome_index {
+            0 => self.goals.work.actions.clone(),
+            1 => self.goals.health.actions.clone(),
+            2 => self.goals.family.actions.clone(),
+            _ => return Ok(()),
+        };
+
+        // Get the metadata for the current outcome
+        let action_meta_list = match self.outcome_index {
+            0 => &mut self.day_meta.work,
+            1 => &mut self.day_meta.health,
+            2 => &mut self.day_meta.family,
+            _ => return Ok(()),
+        };
+
+        // Ensure we have metadata for the current action index
+        while action_meta_list.len() <= self.action_index {
+            if self.action_index < current_outcome_actions.len() {
+                let action = &current_outcome_actions[self.action_index];
+                let meta = crate::models::ActionMeta {
+                    id: action.id.clone(),
+                    status: action.status,
+                    origin: action.origin.clone(),
+                    estimated_min: None,
+                    actual_min: None,
+                    priority: None,
+                    tags: vec![],
+                    objective_id: None,
+                };
+                action_meta_list.push(meta);
+            } else {
+                break;
+            }
+        }
+
+        // Update the objective_id for the current action
+        if let Some(action_meta) = action_meta_list.get_mut(self.action_index) {
+            action_meta.objective_id = objective_id;
+            self.meta_needs_save = true;
+        }
+
+        Ok(())
+    }
+
     fn handle_template_selection_mode(
         &mut self,
         key: KeyEvent,
@@ -861,11 +1006,25 @@ impl App {
                     if let Some(actions) = templates.get_template(template_name) {
                         let current_outcome = self.get_current_outcome_mut();
 
-                        // Apply template actions to empty slots (up to current action count)
+                        // First, ensure we have enough action slots for the template
+                        while current_outcome.actions.len() < actions.len() && current_outcome.actions.len() < 5 {
+                            if let Err(e) = current_outcome.add_action() {
+                                eprintln!("Warning: Could not add action slot: {}", e);
+                                break;
+                            }
+                        }
+
+                        // Apply template actions to empty slots (up to available slots)
                         for (i, action_text) in actions.iter().enumerate() {
-                            if i < current_outcome.actions.len() && current_outcome.actions[i].text.is_empty() {
-                                current_outcome.actions[i].text = action_text.clone();
-                                current_outcome.actions[i].completed = false;
+                            if i < current_outcome.actions.len() {
+                                // Only overwrite empty actions to avoid losing user data
+                                if current_outcome.actions[i].text.is_empty() {
+                                    current_outcome.actions[i].text = action_text.clone();
+                                    current_outcome.actions[i].origin =
+                                        crate::models::ActionOrigin::Template;
+                                    current_outcome.actions[i]
+                                        .set_status(crate::models::ActionStatus::Planned);
+                                }
                             }
                         }
 
@@ -876,6 +1035,154 @@ impl App {
             }
             KeyCode::Esc => {
                 self.input_mode = InputMode::Normal;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_objective_selection_mode(
+        &mut self,
+        key: KeyEvent,
+        domain: OutcomeType,
+        mut selection_index: usize,
+    ) -> Result<()> {
+        // Get objectives for the current domain
+        let domain_objectives: Vec<&crate::models::Objective> = self
+            .objectives
+            .objectives
+            .iter()
+            .filter(|obj| obj.domain == domain)
+            .collect();
+
+        // Total options = objectives + "Create New" option
+        let total_options = domain_objectives.len() + 1;
+
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if selection_index < total_options.saturating_sub(1) {
+                    selection_index += 1;
+                    self.input_mode = InputMode::ObjectiveSelection {
+                        domain,
+                        selection_index,
+                    };
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if selection_index > 0 {
+                    selection_index -= 1;
+                    self.input_mode = InputMode::ObjectiveSelection {
+                        domain,
+                        selection_index,
+                    };
+                }
+            }
+            KeyCode::Enter => {
+                if selection_index < domain_objectives.len() {
+                    // Selected an existing objective - get data before mutable operations
+                    let selected_objective = domain_objectives[selection_index];
+                    let objective_id = selected_objective.id.clone();
+                    let objective_title = selected_objective.title.clone();
+                    
+                    self.link_current_action_to_objective(Some(objective_id))?;
+                    self.set_info(&format!("Linked to objective: {}", objective_title));
+                    self.input_mode = InputMode::Normal;
+                } else {
+                    // Selected "Create New Objective" - enter creation mode
+                    self.input_mode = InputMode::ObjectiveCreation {
+                        domain,
+                        buffer: String::new(),
+                    };
+                }
+            }
+            KeyCode::Char('i') => {
+                // Open indicator management for selected objective
+                if selection_index < domain_objectives.len() {
+                    let selected_objective = domain_objectives[selection_index];
+                    let objective_id = selected_objective.id.clone();
+                    let objective_title = selected_objective.title.clone();
+                    
+                    // Get indicators for this objective
+                    let objective_indicators: Vec<crate::models::IndicatorDef> = self
+                        .indicators
+                        .indicators
+                        .iter()
+                        .filter(|ind| ind.objective_id.as_ref() == Some(&objective_id))
+                        .cloned()
+                        .collect();
+                    
+                    self.input_mode = InputMode::IndicatorManagement {
+                        objective_id,
+                        objective_title,
+                        indicators: objective_indicators,
+                        selection_index: 0,
+                        editing_field: None,
+                    };
+                } else {
+                    self.set_error("Create an objective first before managing indicators".to_string());
+                }
+            }
+            KeyCode::Char('n') => {
+                // Unlink from objective (set to None)
+                self.link_current_action_to_objective(None)?;
+                self.set_info("Unlinked from objective");
+                self.input_mode = InputMode::Normal;
+            }
+            KeyCode::Esc => {
+                self.input_mode = InputMode::Normal;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_objective_creation_mode(
+        &mut self,
+        key: KeyEvent,
+        domain: OutcomeType,
+        mut buffer: String,
+    ) -> Result<()> {
+        match key.code {
+            KeyCode::Enter => {
+                if !buffer.trim().is_empty() {
+                    // Create new objective
+                    let new_objective = crate::models::Objective::new(domain, buffer.trim().to_string());
+                    let objective_id = new_objective.id.clone();
+                    let objective_title = new_objective.title.clone();
+                    
+                    // Add to objectives list
+                    self.objectives.objectives.push(new_objective);
+                    
+                    // Save objectives to file
+                    if let Err(e) = save_objectives(&self.objectives, &self.config) {
+                        self.set_error(format!("Failed to save objective: {}", e));
+                    } else {
+                        // Link current action to the new objective
+                        if let Err(e) = self.link_current_action_to_objective(Some(objective_id)) {
+                            self.set_error(format!("Failed to link action to objective: {}", e));
+                        } else {
+                            self.set_info(&format!("Created and linked to objective: {}", objective_title));
+                        }
+                    }
+                }
+                self.input_mode = InputMode::Normal;
+            }
+            KeyCode::Esc => {
+                self.input_mode = InputMode::Normal;
+            }
+            KeyCode::Char(c) => {
+                buffer.push(c);
+                self.input_mode = InputMode::ObjectiveCreation {
+                    domain,
+                    buffer,
+                };
+            }
+            KeyCode::Backspace => {
+                buffer.pop();
+                self.input_mode = InputMode::ObjectiveCreation {
+                    domain,
+                    buffer,
+                };
             }
             _ => {}
         }
@@ -1078,6 +1385,447 @@ impl App {
         Ok(())
     }
 
+    /// Handle indicator management mode
+    fn handle_indicator_management_mode(
+        &mut self,
+        key: KeyEvent,
+        objective_id: String,
+        objective_title: String,
+        mut indicators: Vec<crate::models::IndicatorDef>,
+        mut selection_index: usize,
+        editing_field: Option<IndicatorEditField>,
+    ) -> Result<()> {
+        // If editing a field, handle text input
+        if let Some(ref field) = editing_field {
+            match key.code {
+                KeyCode::Enter => {
+                    // Save the edit
+                    if selection_index < indicators.len() {
+                        match field {
+                            IndicatorEditField::Name(ref buffer) => {
+                                indicators[selection_index].name = buffer.clone();
+                            }
+                            IndicatorEditField::Target(ref buffer) => {
+                                indicators[selection_index].target = buffer.parse::<f64>().ok();
+                            }
+                            IndicatorEditField::Notes(ref buffer) => {
+                                indicators[selection_index].notes = if buffer.is_empty() {
+                                    None
+                                } else {
+                                    Some(buffer.clone())
+                                };
+                            }
+                        }
+                        
+                        // Update the main indicators list
+                        let indicator = &indicators[selection_index];
+                        if let Some(main_ind) = self
+                            .indicators
+                            .indicators
+                            .iter_mut()
+                            .find(|ind| ind.id == indicator.id)
+                        {
+                            main_ind.name = indicator.name.clone();
+                            main_ind.target = indicator.target;
+                            main_ind.notes = indicator.notes.clone();
+                            main_ind.modified = chrono::Utc::now();
+                        }
+                        self.indicators_needs_save = true;
+                    }
+                    
+                    // Exit edit mode
+                    self.input_mode = InputMode::IndicatorManagement {
+                        objective_id,
+                        objective_title,
+                        indicators,
+                        selection_index,
+                        editing_field: None,
+                    };
+                }
+                KeyCode::Char(c) => {
+                    // Add character to buffer
+                    let mut new_field = editing_field.clone();
+                    match &mut new_field {
+                        Some(IndicatorEditField::Name(ref mut buffer))
+                        | Some(IndicatorEditField::Target(ref mut buffer))
+                        | Some(IndicatorEditField::Notes(ref mut buffer)) => {
+                            buffer.push(c);
+                        }
+                        _ => {}
+                    }
+                    self.input_mode = InputMode::IndicatorManagement {
+                        objective_id,
+                        objective_title,
+                        indicators,
+                        selection_index,
+                        editing_field: new_field,
+                    };
+                }
+                KeyCode::Backspace => {
+                    // Remove character from buffer
+                    let mut new_field = editing_field.clone();
+                    match &mut new_field {
+                        Some(IndicatorEditField::Name(ref mut buffer))
+                        | Some(IndicatorEditField::Target(ref mut buffer))
+                        | Some(IndicatorEditField::Notes(ref mut buffer)) => {
+                            buffer.pop();
+                        }
+                        _ => {}
+                    }
+                    self.input_mode = InputMode::IndicatorManagement {
+                        objective_id,
+                        objective_title,
+                        indicators,
+                        selection_index,
+                        editing_field: new_field,
+                    };
+                }
+                KeyCode::Esc => {
+                    // Cancel editing
+                    self.input_mode = InputMode::IndicatorManagement {
+                        objective_id,
+                        objective_title,
+                        indicators,
+                        selection_index,
+                        editing_field: None,
+                    };
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+        
+        // Normal navigation mode
+        let total_options = indicators.len() + 1; // +1 for "Create New"
+        
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if selection_index < total_options.saturating_sub(1) {
+                    selection_index += 1;
+                    self.input_mode = InputMode::IndicatorManagement {
+                        objective_id,
+                        objective_title,
+                        indicators,
+                        selection_index,
+                        editing_field: None,
+                    };
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if selection_index > 0 {
+                    selection_index -= 1;
+                    self.input_mode = InputMode::IndicatorManagement {
+                        objective_id,
+                        objective_title,
+                        indicators,
+                        selection_index,
+                        editing_field: None,
+                    };
+                }
+            }
+            KeyCode::Enter => {
+                if selection_index < indicators.len() {
+                    // Edit name of existing indicator
+                    let current_name = indicators[selection_index].name.clone();
+                    self.input_mode = InputMode::IndicatorManagement {
+                        objective_id,
+                        objective_title,
+                        indicators,
+                        selection_index,
+                        editing_field: Some(IndicatorEditField::Name(current_name)),
+                    };
+                } else {
+                    // Create new indicator
+                    self.input_mode = InputMode::IndicatorCreation {
+                        objective_id,
+                        objective_title,
+                        field_index: 0,
+                        name_buffer: String::new(),
+                        kind: crate::models::IndicatorKind::Leading,
+                        unit: crate::models::IndicatorUnit::Count,
+                        unit_custom_buffer: String::new(),
+                        target_buffer: String::new(),
+                        direction: crate::models::IndicatorDirection::HigherIsBetter,
+                        notes_buffer: String::new(),
+                    };
+                }
+            }
+            KeyCode::Char('t') if selection_index < indicators.len() => {
+                // Edit target
+                let current_target = indicators[selection_index]
+                    .target
+                    .map(|t| t.to_string())
+                    .unwrap_or_default();
+                self.input_mode = InputMode::IndicatorManagement {
+                    objective_id,
+                    objective_title,
+                    indicators,
+                    selection_index,
+                    editing_field: Some(IndicatorEditField::Target(current_target)),
+                };
+            }
+            KeyCode::Char('n') if selection_index < indicators.len() => {
+                // Edit notes
+                let current_notes = indicators[selection_index]
+                    .notes
+                    .clone()
+                    .unwrap_or_default();
+                self.input_mode = InputMode::IndicatorManagement {
+                    objective_id,
+                    objective_title,
+                    indicators,
+                    selection_index,
+                    editing_field: Some(IndicatorEditField::Notes(current_notes)),
+                };
+            }
+            KeyCode::Char('d') if selection_index < indicators.len() => {
+                // Delete indicator
+                let indicator_id = indicators[selection_index].id.clone();
+                
+                // Remove from main list
+                self.indicators.indicators.retain(|ind| ind.id != indicator_id);
+                self.indicators_needs_save = true;
+                
+                // Remove from local list
+                indicators.remove(selection_index);
+                
+                // Adjust selection index if needed
+                if selection_index >= indicators.len() && selection_index > 0 {
+                    selection_index = indicators.len() - 1;
+                }
+                
+                self.input_mode = InputMode::IndicatorManagement {
+                    objective_id,
+                    objective_title,
+                    indicators,
+                    selection_index,
+                    editing_field: None,
+                };
+                
+                self.set_info("Indicator deleted");
+            }
+            KeyCode::Char(' ') if selection_index < indicators.len() => {
+                // Toggle active status
+                indicators[selection_index].active = !indicators[selection_index].active;
+                
+                // Update main list
+                let indicator = &indicators[selection_index];
+                if let Some(main_ind) = self
+                    .indicators
+                    .indicators
+                    .iter_mut()
+                    .find(|ind| ind.id == indicator.id)
+                {
+                    main_ind.active = indicator.active;
+                    main_ind.modified = chrono::Utc::now();
+                }
+                self.indicators_needs_save = true;
+                
+                self.input_mode = InputMode::IndicatorManagement {
+                    objective_id,
+                    objective_title,
+                    indicators,
+                    selection_index,
+                    editing_field: None,
+                };
+            }
+            KeyCode::Esc => {
+                // Return to objective selection
+                self.input_mode = InputMode::ObjectiveSelection {
+                    domain: self.get_current_outcome_type(),
+                    selection_index: 0,
+                };
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Handle indicator creation mode
+    fn handle_indicator_creation_mode(
+        &mut self,
+        key: KeyEvent,
+        objective_id: String,
+        objective_title: String,
+        mut field_index: usize,
+        mut name_buffer: String,
+        mut kind: crate::models::IndicatorKind,
+        mut unit: crate::models::IndicatorUnit,
+        mut unit_custom_buffer: String,
+        mut target_buffer: String,
+        mut direction: crate::models::IndicatorDirection,
+        mut notes_buffer: String,
+    ) -> Result<()> {
+        match key.code {
+            KeyCode::Tab => {
+                // Move to next field
+                field_index = (field_index + 1) % 6; // 6 fields total
+                self.input_mode = InputMode::IndicatorCreation {
+                    objective_id,
+                    objective_title,
+                    field_index,
+                    name_buffer,
+                    kind,
+                    unit,
+                    unit_custom_buffer,
+                    target_buffer,
+                    direction,
+                    notes_buffer,
+                };
+            }
+            KeyCode::Enter => {
+                // Save if name is provided
+                if !name_buffer.trim().is_empty() {
+                    let mut indicator = crate::models::IndicatorDef::new(
+                        name_buffer.trim().to_string(),
+                        kind,
+                        unit.clone(),
+                    );
+                    indicator.objective_id = Some(objective_id.clone());
+                    indicator.target = target_buffer.parse::<f64>().ok();
+                    indicator.direction = direction;
+                    indicator.notes = if notes_buffer.is_empty() {
+                        None
+                    } else {
+                        Some(notes_buffer)
+                    };
+                    
+                    // Add to indicators
+                    self.indicators.indicators.push(indicator.clone());
+                    self.indicators_needs_save = true;
+                    
+                    // Return to management mode with updated list
+                    let objective_indicators: Vec<crate::models::IndicatorDef> = self
+                        .indicators
+                        .indicators
+                        .iter()
+                        .filter(|ind| ind.objective_id.as_ref() == Some(&objective_id))
+                        .cloned()
+                        .collect();
+                    
+                    self.input_mode = InputMode::IndicatorManagement {
+                        objective_id,
+                        objective_title,
+                        indicators: objective_indicators,
+                        selection_index: 0,
+                        editing_field: None,
+                    };
+                    
+                    self.set_info("Indicator created");
+                } else {
+                    self.set_error("Indicator name is required".to_string());
+                }
+            }
+            KeyCode::Char(c) => {
+                // Input based on current field
+                match field_index {
+                    0 => name_buffer.push(c), // Name
+                    1 => {
+                        // Kind (l for Leading, a for Lagging)
+                        if c == 'l' || c == 'L' {
+                            kind = crate::models::IndicatorKind::Leading;
+                        } else if c == 'a' || c == 'A' {
+                            kind = crate::models::IndicatorKind::Lagging;
+                        }
+                    }
+                    2 => {
+                        // Unit (c=Count, m=Minutes, d=Dollars, p=Percent, u=Custom)
+                        match c {
+                            'c' | 'C' => unit = crate::models::IndicatorUnit::Count,
+                            'm' | 'M' => unit = crate::models::IndicatorUnit::Minutes,
+                            'd' | 'D' => unit = crate::models::IndicatorUnit::Dollars,
+                            'p' | 'P' => unit = crate::models::IndicatorUnit::Percent,
+                            'u' | 'U' => {
+                                unit = crate::models::IndicatorUnit::Custom(unit_custom_buffer.clone())
+                            }
+                            _ if matches!(unit, crate::models::IndicatorUnit::Custom(_)) => {
+                                unit_custom_buffer.push(c);
+                                unit = crate::models::IndicatorUnit::Custom(unit_custom_buffer.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+                    3 => {
+                        // Target (numeric only)
+                        if c.is_ascii_digit() || c == '.' {
+                            target_buffer.push(c);
+                        }
+                    }
+                    4 => {
+                        // Direction (h=Higher, l=Lower, r=Range)
+                        match c {
+                            'h' | 'H' => direction = crate::models::IndicatorDirection::HigherIsBetter,
+                            'l' | 'L' => direction = crate::models::IndicatorDirection::LowerIsBetter,
+                            'r' | 'R' => direction = crate::models::IndicatorDirection::WithinRange,
+                            _ => {}
+                        }
+                    }
+                    5 => notes_buffer.push(c), // Notes
+                    _ => {}
+                }
+                
+                self.input_mode = InputMode::IndicatorCreation {
+                    objective_id,
+                    objective_title,
+                    field_index,
+                    name_buffer,
+                    kind,
+                    unit,
+                    unit_custom_buffer,
+                    target_buffer,
+                    direction,
+                    notes_buffer,
+                };
+            }
+            KeyCode::Backspace => {
+                // Remove character based on current field
+                match field_index {
+                    0 => { name_buffer.pop(); }
+                    2 if matches!(unit, crate::models::IndicatorUnit::Custom(_)) => {
+                        unit_custom_buffer.pop();
+                        unit = crate::models::IndicatorUnit::Custom(unit_custom_buffer.clone());
+                    }
+                    3 => { target_buffer.pop(); }
+                    5 => { notes_buffer.pop(); }
+                    _ => {}
+                }
+                
+                self.input_mode = InputMode::IndicatorCreation {
+                    objective_id,
+                    objective_title,
+                    field_index,
+                    name_buffer,
+                    kind,
+                    unit,
+                    unit_custom_buffer,
+                    target_buffer,
+                    direction,
+                    notes_buffer,
+                };
+            }
+            KeyCode::Esc => {
+                // Cancel and return to management mode
+                let objective_indicators: Vec<crate::models::IndicatorDef> = self
+                    .indicators
+                    .indicators
+                    .iter()
+                    .filter(|ind| ind.objective_id.as_ref() == Some(&objective_id))
+                    .cloned()
+                    .collect();
+                
+                self.input_mode = InputMode::IndicatorManagement {
+                    objective_id,
+                    objective_title,
+                    indicators: objective_indicators,
+                    selection_index: 0,
+                    editing_field: None,
+                };
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     /// Apply incomplete tasks from yesterday
     pub fn apply_yesterday_incomplete(&mut self, yesterday: &DailyGoals) {
         // Work actions
@@ -1088,6 +1836,8 @@ impl App {
                 && self.goals.work.actions[i].text.is_empty()
             {
                 self.goals.work.actions[i].text = action.text.clone();
+                self.goals.work.actions[i].origin = crate::models::ActionOrigin::CarryOver;
+                self.goals.work.actions[i].set_status(crate::models::ActionStatus::Planned);
             }
         }
 
@@ -1099,6 +1849,8 @@ impl App {
                 && self.goals.health.actions[i].text.is_empty()
             {
                 self.goals.health.actions[i].text = action.text.clone();
+                self.goals.health.actions[i].origin = crate::models::ActionOrigin::CarryOver;
+                self.goals.health.actions[i].set_status(crate::models::ActionStatus::Planned);
             }
         }
 
@@ -1110,6 +1862,8 @@ impl App {
                 && self.goals.family.actions[i].text.is_empty()
             {
                 self.goals.family.actions[i].text = action.text.clone();
+                self.goals.family.actions[i].origin = crate::models::ActionOrigin::CarryOver;
+                self.goals.family.actions[i].set_status(crate::models::ActionStatus::Planned);
             }
         }
     }
@@ -1126,43 +1880,45 @@ impl App {
         for (i, action_text) in actions.iter().enumerate() {
             if i < outcome.actions.len() && outcome.actions[i].text.is_empty() {
                 outcome.actions[i].text = action_text.clone();
+                outcome.actions[i].origin = crate::models::ActionOrigin::Template;
+                outcome.actions[i].set_status(crate::models::ActionStatus::Planned);
             }
         }
     }
 
-    /// Toggle action completion by index (0-8)
     /// Toggle action by global index (handles variable action counts)
+    /// Now cycles through status: Planned → InProgress → Done → Skipped → Blocked → Planned
     pub fn toggle_action_by_global_index(&mut self, global_index: usize) {
         let mut current_index = 0;
-        
+
         // Work actions
-        for (i, action) in self.goals.work.actions.iter_mut().enumerate() {
+        for action in self.goals.work.actions.iter_mut() {
             if current_index == global_index {
-                action.completed = !action.completed;
+                action.cycle_status();
                 return;
             }
             current_index += 1;
         }
-        
+
         // Health actions
-        for (i, action) in self.goals.health.actions.iter_mut().enumerate() {
+        for action in self.goals.health.actions.iter_mut() {
             if current_index == global_index {
-                action.completed = !action.completed;
+                action.cycle_status();
                 return;
             }
             current_index += 1;
         }
-        
+
         // Family actions
-        for (i, action) in self.goals.family.actions.iter_mut().enumerate() {
+        for action in self.goals.family.actions.iter_mut() {
             if current_index == global_index {
-                action.completed = !action.completed;
+                action.cycle_status();
                 return;
             }
             current_index += 1;
         }
     }
-    
+
     // Keep old method for backward compatibility
     pub fn toggle_action_by_index(&mut self, index: usize) {
         self.toggle_action_by_global_index(index);

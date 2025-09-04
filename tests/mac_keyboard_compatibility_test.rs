@@ -12,6 +12,7 @@ fn setup_test_app() -> (App, TempDir) {
 
     let config = Config {
         goals_dir: goals_dir.to_str().unwrap().to_string(),
+        data_root: temp_dir.path().to_str().unwrap().to_string(),
     };
 
     let goals = DailyGoals::new(NaiveDate::from_ymd_opt(2025, 1, 15).unwrap());
@@ -39,10 +40,7 @@ fn test_ctrl_enter_saves_vision_on_windows_linux() {
     // Should be back in normal mode
     assert_eq!(app.input_mode, InputMode::Normal);
     // Vision should be saved
-    assert_eq!(
-        app.vision.get_vision(&OutcomeType::Work),
-        "Test vision"
-    );
+    assert_eq!(app.vision.get_vision(&OutcomeType::Work), "Test vision");
 }
 
 #[test]
@@ -63,10 +61,7 @@ fn test_cmd_enter_saves_vision_on_mac() {
     // Should be back in normal mode
     assert_eq!(app.input_mode, InputMode::Normal);
     // Vision should be saved
-    assert_eq!(
-        app.vision.get_vision(&OutcomeType::Work),
-        "Test vision Mac"
-    );
+    assert_eq!(app.vision.get_vision(&OutcomeType::Work), "Test vision Mac");
 }
 
 #[test]
@@ -180,8 +175,5 @@ fn test_both_modifiers_work_simultaneously() {
 
     // Should save and exit to normal mode
     assert_eq!(app.input_mode, InputMode::Normal);
-    assert_eq!(
-        app.vision.get_vision(&OutcomeType::Work),
-        "Both modifiers"
-    );
+    assert_eq!(app.vision.get_vision(&OutcomeType::Work), "Both modifiers");
 }

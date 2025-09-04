@@ -35,33 +35,34 @@ fn test_two_weeks_observations_with_7day_window() -> Result<()> {
         let date = start_date
             .checked_add_signed(chrono::Duration::days(day_offset))
             .unwrap();
-        
+
         // Vary the values for testing
         let value = 1000.0 + (day_offset as f64 * 50.0);
-        
-        let obs = Observation::new(
-            indicator_id.clone(),
-            date,
-            value,
-            IndicatorUnit::Dollars,
-        );
-        
+
+        let obs = Observation::new(indicator_id.clone(), date, value, IndicatorUnit::Dollars);
+
         append_observation(&obs, &config)?;
     }
 
     // Read 7-day window from the middle
     let window_start = NaiveDate::from_ymd_opt(2025, 8, 19).unwrap();
     let window_end = NaiveDate::from_ymd_opt(2025, 8, 25).unwrap();
-    
+
     let window_obs = read_observations_range(window_start, window_end, &config)?;
-    
+
     // Should have exactly 7 observations
     assert_eq!(window_obs.len(), 7);
-    
+
     // Verify dates are correct
-    assert_eq!(window_obs[0].when, NaiveDate::from_ymd_opt(2025, 8, 19).unwrap());
-    assert_eq!(window_obs[6].when, NaiveDate::from_ymd_opt(2025, 8, 25).unwrap());
-    
+    assert_eq!(
+        window_obs[0].when,
+        NaiveDate::from_ymd_opt(2025, 8, 19).unwrap()
+    );
+    assert_eq!(
+        window_obs[6].when,
+        NaiveDate::from_ymd_opt(2025, 8, 25).unwrap()
+    );
+
     // Verify values (day 4 = 1200, day 5 = 1250, ..., day 10 = 1500)
     assert_eq!(window_obs[0].value, 1200.0); // Day 4 (Aug 19)
     assert_eq!(window_obs[3].value, 1350.0); // Day 7 (Aug 22)
@@ -142,27 +143,26 @@ fn test_multiple_indicators_observations() -> Result<()> {
     }
 
     // Read all observations
-    let all_obs = read_observations_range(
-        dates[0],
-        dates[dates.len() - 1],
-        &config,
-    )?;
+    let all_obs = read_observations_range(dates[0], dates[dates.len() - 1], &config)?;
 
     // Should have 9 observations (3 indicators × 3 days)
     assert_eq!(all_obs.len(), 9);
 
     // Group by indicator and verify
-    let traffic_obs: Vec<_> = all_obs.iter()
+    let traffic_obs: Vec<_> = all_obs
+        .iter()
         .filter(|o| o.indicator_id == ind1_id)
         .collect();
     assert_eq!(traffic_obs.len(), 3);
 
-    let conversion_obs: Vec<_> = all_obs.iter()
+    let conversion_obs: Vec<_> = all_obs
+        .iter()
         .filter(|o| o.indicator_id == ind2_id)
         .collect();
     assert_eq!(conversion_obs.len(), 3);
 
-    let ticket_obs: Vec<_> = all_obs.iter()
+    let ticket_obs: Vec<_> = all_obs
+        .iter()
         .filter(|o| o.indicator_id == ind3_id)
         .collect();
     assert_eq!(ticket_obs.len(), 3);
@@ -229,15 +229,18 @@ fn test_observations_with_notes_and_links() -> Result<()> {
     )?;
 
     assert_eq!(all_obs.len(), 3);
-    
+
     // First observation has both action_id and note
     assert_eq!(all_obs[0].action_id, Some("action-abc".to_string()));
-    assert_eq!(all_obs[0].note, Some("Reviewed 3 PRs this morning".to_string()));
-    
+    assert_eq!(
+        all_obs[0].note,
+        Some("Reviewed 3 PRs this morning".to_string())
+    );
+
     // Second has only action_id
     assert_eq!(all_obs[1].action_id, Some("action-def".to_string()));
     assert!(all_obs[1].note.is_none());
-    
+
     // Third has neither
     assert!(all_obs[2].action_id.is_none());
     assert!(all_obs[2].note.is_none());
@@ -272,14 +275,14 @@ fn test_large_observation_dataset() -> Result<()> {
         let date = start_date
             .checked_add_signed(chrono::Duration::days(day))
             .unwrap();
-        
+
         let obs = Observation::new(
             indicator_id.clone(),
             date,
             (day as f64) * 2.0,
             IndicatorUnit::Count,
         );
-        
+
         append_observation(&obs, &config)?;
     }
 
@@ -306,7 +309,7 @@ fn test_large_observation_dataset() -> Result<()> {
         &config,
     )?;
     assert_eq!(single_day.len(), 1);
-    
+
     // July 1 is day 182 (31+28+31+30+31+30+1)
     // So the value should be 181 * 2 = 362
     assert_eq!(single_day[0].value, 362.0);

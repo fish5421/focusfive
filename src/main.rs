@@ -93,7 +93,7 @@ fn run_app<B: ratatui::backend::Backend>(
                             }
                         }
                     }
-                    
+
                     // Save metadata if needed
                     if app.meta_needs_save {
                         match data::save_day_meta(app.goals.date, &app.day_meta, config) {
@@ -169,12 +169,16 @@ fn run_app<B: ratatui::backend::Backend>(
                             }
                             // Also save metadata
                             app.day_meta.reconcile_with_goals(&app.goals);
-                            if let Err(e) = data::save_day_meta(app.goals.date, &app.day_meta, config) {
+                            if let Err(e) =
+                                data::save_day_meta(app.goals.date, &app.day_meta, config)
+                            {
                                 eprintln!("Warning: Failed to save metadata: {}", e);
                             }
                         }
                         if app.meta_needs_save {
-                            if let Err(e) = data::save_day_meta(app.goals.date, &app.day_meta, config) {
+                            if let Err(e) =
+                                data::save_day_meta(app.goals.date, &app.day_meta, config)
+                            {
                                 eprintln!("Warning: Failed to save metadata: {}", e);
                             }
                         }

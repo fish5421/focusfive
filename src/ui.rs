@@ -46,8 +46,16 @@ pub fn render_app(f: &mut Frame, app: &App) {
         render_template_selector(f, chunks[1], app);
     } else if matches!(app.input_mode, InputMode::TemplateSaving { .. }) {
         render_template_saving(f, chunks[1], app);
+    } else if matches!(app.input_mode, InputMode::ObjectiveSelection { .. }) {
+        render_objective_selector(f, chunks[1], app);
+    } else if matches!(app.input_mode, InputMode::ObjectiveCreation { .. }) {
+        render_objective_creation(f, chunks[1], app);
     } else if matches!(app.input_mode, InputMode::Reflecting { .. }) {
         render_reflection_modal(f, chunks[1], app);
+    } else if matches!(app.input_mode, InputMode::IndicatorManagement { .. }) {
+        render_indicator_manager(f, chunks[1], app);
+    } else if matches!(app.input_mode, InputMode::IndicatorCreation { .. }) {
+        render_indicator_creator(f, chunks[1], app);
     } else {
         // Render phase-specific content
         match app.ritual_phase {
@@ -82,9 +90,9 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
     } else {
         String::new()
     };
-    let total_actions = app.goals.work.actions.len() + 
-                        app.goals.health.actions.len() + 
-                        app.goals.family.actions.len();
+    let total_actions = app.goals.work.actions.len()
+        + app.goals.health.actions.len()
+        + app.goals.family.actions.len();
     let progress = format!("Progress: {}/{}", app.total_completed(), total_actions);
     let streak = format!("🔥 {} day streak", app.current_streak);
 
@@ -209,7 +217,14 @@ fn render_actions_pane(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, action)| {
-            let checkbox = if action.completed { "[x]" } else { "[ ]" };
+            // Use status-based checkbox with visual indicators
+            let checkbox = match action.status {
+                crate::models::ActionStatus::Planned => "[ ]",
+                crate::models::ActionStatus::InProgress => "[→]",
+                crate::models::ActionStatus::Done => "[✓]",
+                crate::models::ActionStatus::Skipped => "[~]",
+                crate::models::ActionStatus::Blocked => "[✗]",
+            };
 
             // Check if this action is being edited
             let editing_this_action =
@@ -224,12 +239,19 @@ fn render_actions_pane(f: &mut Frame, area: Rect, app: &App) {
                 Style::default()
                     .bg(Color::DarkGray)
                     .add_modifier(Modifier::BOLD)
-            } else if action.completed {
-                Style::default().fg(Color::Green)
             } else if action.text.is_empty() {
                 Style::default().fg(Color::DarkGray)
             } else {
-                Style::default()
+                // Color based on status
+                match action.status {
+                    crate::models::ActionStatus::Done => Style::default().fg(Color::Green),
+                    crate::models::ActionStatus::InProgress => Style::default().fg(Color::Yellow),
+                    crate::models::ActionStatus::Blocked => {
+                        Style::default().fg(Color::Red).add_modifier(Modifier::DIM)
+                    }
+                    crate::models::ActionStatus::Skipped => Style::default().fg(Color::DarkGray),
+                    crate::models::ActionStatus::Planned => Style::default(),
+                }
             };
 
             let text = if editing_this_action {
@@ -245,7 +267,38 @@ fn render_actions_pane(f: &mut Frame, area: Rect, app: &App) {
                 action.text.clone()
             };
 
-            ListItem::new(format!("{} {}", checkbox, text)).style(style)
+            // Get objective chip if action is linked to an objective
+            let objective_chip = if !editing_this_action {
+                let action_meta_list = match selected_outcome.outcome_type {
+                    crate::models::OutcomeType::Work => &app.day_meta.work,
+                    crate::models::OutcomeType::Health => &app.day_meta.health,
+                    crate::models::OutcomeType::Family => &app.day_meta.family,
+                };
+
+                if let Some(action_meta) = action_meta_list.get(i) {
+                    if let Some(ref objective_id) = action_meta.objective_id {
+                        // Find the objective by ID
+                        if let Some(objective) = app
+                            .objectives
+                            .objectives
+                            .iter()
+                            .find(|obj| obj.id == *objective_id)
+                        {
+                            format!(" ⟂ {}", objective.title)
+                        } else {
+                            String::new()
+                        }
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+
+            ListItem::new(format!("{} {}{}", checkbox, text, objective_chip)).style(style)
         })
         .collect();
 
@@ -287,7 +340,7 @@ fn render_help(f: &mut Frame, area: Rect) {
             "Actions:",
             Style::default().add_modifier(Modifier::UNDERLINED),
         )]),
-        Line::from("  Space     - Toggle checkbox (in Actions pane)"),
+        Line::from("  Space     - Cycle status: Planned → InProgress → Done → Skipped → Blocked (in Actions pane)"),
         Line::from("  e/Enter   - Edit action text (in Actions pane)"),
         Line::from("  a         - Add new action (max 5 per outcome, in Actions pane)"),
         Line::from("  d         - Delete action (double-press to confirm, min 1 per outcome)"),
@@ -656,6 +709,134 @@ fn render_template_selector(f: &mut Frame, area: Rect, app: &App) {
     }
 }
 
+fn render_objective_selector(f: &mut Frame, area: Rect, app: &App) {
+    if let InputMode::ObjectiveSelection {
+        domain,
+        selection_index,
+    } = &app.input_mode
+    {
+        // Create a modal for objective selection (70% width, 60% height)
+        let modal_area = centered_rect(70, 60, area);
+
+        // Clear the background
+        f.render_widget(Clear, modal_area);
+
+        // Get objectives for the current domain
+        let domain_objectives: Vec<&crate::models::Objective> = app
+            .objectives
+            .objectives
+            .iter()
+            .filter(|obj| obj.domain == *domain)
+            .collect();
+
+        // Build the list of objectives
+        let mut items = Vec::new();
+
+        if domain_objectives.is_empty() {
+            items.push(Line::from(vec![Span::styled(
+                "No objectives available for this domain",
+                Style::default().fg(Color::DarkGray),
+            )]));
+            items.push(Line::from(""));
+        } else {
+            for (idx, objective) in domain_objectives.iter().enumerate() {
+                let style = if idx == *selection_index {
+                    Style::default()
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+
+                // Format objective with status indicator
+                let status_char = match objective.status {
+                    crate::models::ObjectiveStatus::Active => "●",
+                    crate::models::ObjectiveStatus::Paused => "⏸",
+                    crate::models::ObjectiveStatus::Completed => "✓",
+                    crate::models::ObjectiveStatus::Dropped => "✗",
+                };
+
+                // Show title with optional description preview
+                let description_preview = if let Some(ref desc) = objective.description {
+                    if desc.len() > 50 {
+                        format!(" - {}...", &desc[..47])
+                    } else {
+                        format!(" - {}", desc)
+                    }
+                } else {
+                    String::new()
+                };
+
+                items.push(Line::from(vec![Span::styled(
+                    format!("  {} {}{}", status_char, objective.title, description_preview),
+                    style,
+                )]));
+            }
+        }
+
+        // Add "Create New Objective" option at the end
+        items.push(Line::from(""));
+        let create_new_style = if *selection_index == domain_objectives.len() {
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Green)
+        };
+        items.push(Line::from(vec![Span::styled(
+            "  + Create New Objective",
+            create_new_style,
+        )]));
+
+        // Create the paragraph with all items
+        let content = Paragraph::new(items).block(
+            Block::default()
+                .title(format!(
+                    " Select Objective for {} ",
+                    match domain {
+                        crate::models::OutcomeType::Work => "Work",
+                        crate::models::OutcomeType::Health => "Health",
+                        crate::models::OutcomeType::Family => "Family",
+                    }
+                ))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Magenta)),
+        );
+
+        // Render the content
+        f.render_widget(content, modal_area);
+
+        // Render help text at the bottom
+        let help_text = vec![Line::from(vec![
+            Span::styled("j/↓", Style::default().fg(Color::Green)),
+            Span::raw(": Down | "),
+            Span::styled("k/↑", Style::default().fg(Color::Green)),
+            Span::raw(": Up | "),
+            Span::styled("Enter", Style::default().fg(Color::Green)),
+            Span::raw(": Select | "),
+            Span::styled("i", Style::default().fg(Color::Green)),
+            Span::raw(": Indicators | "),
+            Span::styled("n", Style::default().fg(Color::Green)),
+            Span::raw(": None | "),
+            Span::styled("Esc", Style::default().fg(Color::Red)),
+            Span::raw(": Cancel"),
+        ])];
+
+        let help = Paragraph::new(help_text)
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(Alignment::Center);
+
+        // Position help text at bottom of modal
+        let help_area = Rect {
+            x: modal_area.x + 2,
+            y: modal_area.y + modal_area.height - 2,
+            width: modal_area.width - 4,
+            height: 1,
+        };
+        f.render_widget(help, help_area);
+    }
+}
+
 fn render_template_saving(f: &mut Frame, area: Rect, app: &App) {
     if let InputMode::TemplateSaving {
         ref buffer,
@@ -713,6 +894,426 @@ fn render_template_saving(f: &mut Frame, area: Rect, app: &App) {
     }
 }
 
+fn render_objective_creation(f: &mut Frame, area: Rect, app: &App) {
+    if let InputMode::ObjectiveCreation {
+        domain,
+        ref buffer,
+    } = &app.input_mode
+    {
+        // Create a small modal for objective title input (50% width, 20% height)
+        let modal_area = centered_rect(50, 20, area);
+
+        // Clear the background
+        f.render_widget(Clear, modal_area);
+
+        // Create the input field
+        let input = Paragraph::new(buffer.as_str())
+            .style(Style::default().fg(Color::White))
+            .block(
+                Block::default()
+                    .title(format!(
+                        " Create New {} Objective ",
+                        match domain {
+                            crate::models::OutcomeType::Work => "Work",
+                            crate::models::OutcomeType::Health => "Health",
+                            crate::models::OutcomeType::Family => "Family",
+                        }
+                    ))
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Magenta)),
+            );
+
+        // Render the input field
+        f.render_widget(input, modal_area);
+
+        // Render help text
+        let help_text = vec![Line::from(vec![
+            Span::raw("Enter objective title | "),
+            Span::styled("Enter", Style::default().fg(Color::Green)),
+            Span::raw(": Create | "),
+            Span::styled("Esc", Style::default().fg(Color::Red)),
+            Span::raw(": Cancel"),
+        ])];
+
+        let help = Paragraph::new(help_text)
+            .style(Style::default().fg(Color::Gray))
+            .wrap(ratatui::widgets::Wrap { trim: true });
+
+        // Position help text at bottom of modal
+        let help_area = Rect {
+            x: modal_area.x + 2,
+            y: modal_area.y + modal_area.height - 2,
+            width: modal_area.width - 4,
+            height: 1,
+        };
+        f.render_widget(help, help_area);
+    }
+}
+
+fn render_indicator_manager(f: &mut Frame, area: Rect, app: &App) {
+    if let InputMode::IndicatorManagement {
+        ref objective_title,
+        ref indicators,
+        selection_index,
+        ref editing_field,
+        ..
+    } = &app.input_mode
+    {
+        // Create a modal for indicator management (80% width, 70% height)
+        let modal_area = centered_rect(80, 70, area);
+
+        // Clear the background
+        f.render_widget(Clear, modal_area);
+
+        // Build the list of indicators
+        let mut items = Vec::new();
+
+        // Add header
+        items.push(Line::from(vec![Span::styled(
+            format!("  Indicators for: {} ", objective_title),
+            Style::default()
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                .fg(Color::Magenta),
+        )]));
+        items.push(Line::from(""));
+
+        if indicators.is_empty() {
+            items.push(Line::from(vec![Span::styled(
+                "  No indicators defined yet",
+                Style::default().fg(Color::DarkGray),
+            )]));
+            items.push(Line::from(""));
+        } else {
+            // Show existing indicators
+            for (idx, indicator) in indicators.iter().enumerate() {
+                let is_selected = idx == *selection_index;
+                let is_editing = is_selected && editing_field.is_some();
+                
+                let style = if is_editing {
+                    Style::default()
+                        .bg(Color::Blue)
+                        .add_modifier(Modifier::BOLD)
+                } else if is_selected {
+                    Style::default()
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+
+                // Format indicator details
+                let status_icon = if indicator.active { "●" } else { "○" };
+                let kind_str = match indicator.kind {
+                    crate::models::IndicatorKind::Leading => "L",
+                    crate::models::IndicatorKind::Lagging => "La",
+                };
+                let unit_str = match &indicator.unit {
+                    crate::models::IndicatorUnit::Count => "count",
+                    crate::models::IndicatorUnit::Minutes => "min",
+                    crate::models::IndicatorUnit::Dollars => "$",
+                    crate::models::IndicatorUnit::Percent => "%",
+                    crate::models::IndicatorUnit::Custom(s) => s.as_str(),
+                };
+                let target_str = indicator
+                    .target
+                    .map(|t| format!(" → {:.1}", t))
+                    .unwrap_or_default();
+                let direction_str = match indicator.direction {
+                    crate::models::IndicatorDirection::HigherIsBetter => "↑",
+                    crate::models::IndicatorDirection::LowerIsBetter => "↓",
+                    crate::models::IndicatorDirection::WithinRange => "↔",
+                };
+
+                // Handle editing mode display
+                let name_display = if is_editing {
+                    if let Some(crate::app::IndicatorEditField::Name(ref buf)) = editing_field {
+                        format!("{}│", buf)
+                    } else if let Some(crate::app::IndicatorEditField::Target(ref buf)) = editing_field {
+                        format!("{} [{}] {} {}{} {} (editing target: {}│)", 
+                            status_icon, kind_str, indicator.name, unit_str, target_str, direction_str, buf)
+                    } else if let Some(crate::app::IndicatorEditField::Notes(ref buf)) = editing_field {
+                        format!("{} [{}] {} {}{} {} (editing notes: {}│)", 
+                            status_icon, kind_str, indicator.name, unit_str, target_str, direction_str, buf)
+                    } else {
+                        format!("{} [{}] {} {}{} {}", 
+                            status_icon, kind_str, indicator.name, unit_str, target_str, direction_str)
+                    }
+                } else {
+                    format!("{} [{}] {} {}{} {}", 
+                        status_icon, kind_str, indicator.name, unit_str, target_str, direction_str)
+                };
+
+                items.push(Line::from(vec![Span::styled(
+                    format!("  {}", name_display),
+                    style,
+                )]));
+
+                // Show notes if present and not editing
+                if !is_editing && indicator.notes.is_some() {
+                    let notes = indicator.notes.as_ref().unwrap();
+                    let notes_preview = if notes.len() > 60 {
+                        format!("    Notes: {}...", &notes[..57])
+                    } else {
+                        format!("    Notes: {}", notes)
+                    };
+                    items.push(Line::from(vec![Span::styled(
+                        notes_preview,
+                        Style::default().fg(Color::DarkGray),
+                    )]));
+                }
+            }
+        }
+
+        // Add "Create New" option
+        items.push(Line::from(""));
+        let create_new_style = if *selection_index == indicators.len() {
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::Green)
+        };
+        items.push(Line::from(vec![Span::styled(
+            "  + Create New Indicator",
+            create_new_style,
+        )]));
+
+        // Create the paragraph with all items
+        let content = Paragraph::new(items).block(
+            Block::default()
+                .title(" Indicator Management ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+        );
+
+        // Render the content
+        f.render_widget(content, modal_area);
+
+        // Render help text at the bottom
+        let help_text = if editing_field.is_some() {
+            vec![Line::from(vec![
+                Span::raw("Type to edit | "),
+                Span::styled("Enter", Style::default().fg(Color::Green)),
+                Span::raw(": Save | "),
+                Span::styled("Esc", Style::default().fg(Color::Red)),
+                Span::raw(": Cancel"),
+            ])]
+        } else {
+            vec![Line::from(vec![
+                Span::styled("j/↓", Style::default().fg(Color::Green)),
+                Span::raw(": Down | "),
+                Span::styled("k/↑", Style::default().fg(Color::Green)),
+                Span::raw(": Up | "),
+                Span::styled("Enter", Style::default().fg(Color::Green)),
+                Span::raw(": Edit Name | "),
+                Span::styled("t", Style::default().fg(Color::Green)),
+                Span::raw(": Target | "),
+                Span::styled("n", Style::default().fg(Color::Green)),
+                Span::raw(": Notes | "),
+                Span::styled("Space", Style::default().fg(Color::Green)),
+                Span::raw(": Toggle Active | "),
+                Span::styled("d", Style::default().fg(Color::Red)),
+                Span::raw(": Delete | "),
+                Span::styled("Esc", Style::default().fg(Color::Red)),
+                Span::raw(": Back"),
+            ])]
+        };
+
+        let help = Paragraph::new(help_text)
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(Alignment::Center);
+
+        // Position help text at bottom of modal
+        let help_area = Rect {
+            x: modal_area.x + 2,
+            y: modal_area.y + modal_area.height - 2,
+            width: modal_area.width - 4,
+            height: 1,
+        };
+        f.render_widget(help, help_area);
+    }
+}
+
+fn render_indicator_creator(f: &mut Frame, area: Rect, app: &App) {
+    if let InputMode::IndicatorCreation {
+        ref objective_title,
+        field_index,
+        ref name_buffer,
+        ref kind,
+        ref unit,
+        ref unit_custom_buffer,
+        ref target_buffer,
+        ref direction,
+        ref notes_buffer,
+        ..
+    } = &app.input_mode
+    {
+        // Create a modal for indicator creation (70% width, 50% height)
+        let modal_area = centered_rect(70, 50, area);
+
+        // Clear the background
+        f.render_widget(Clear, modal_area);
+
+        // Build the form fields
+        let mut items = Vec::new();
+
+        // Title
+        items.push(Line::from(vec![Span::styled(
+            format!("  Creating Indicator for: {} ", objective_title),
+            Style::default()
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                .fg(Color::Magenta),
+        )]));
+        items.push(Line::from(""));
+
+        // Field 0: Name
+        let name_style = if *field_index == 0 {
+            Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        items.push(Line::from(vec![
+            Span::styled("  Name: ", Style::default()),
+            Span::styled(
+                if name_buffer.is_empty() {
+                    "_".to_string()
+                } else {
+                    format!("{}│", name_buffer)
+                },
+                name_style,
+            ),
+        ]));
+
+        // Field 1: Kind
+        let kind_style = if *field_index == 1 {
+            Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let kind_str = match kind {
+            crate::models::IndicatorKind::Leading => "Leading",
+            crate::models::IndicatorKind::Lagging => "Lagging",
+        };
+        items.push(Line::from(vec![
+            Span::styled("  Kind: ", Style::default()),
+            Span::styled(kind_str, kind_style),
+            Span::styled(" (L=Leading, A=Lagging)", Style::default().fg(Color::DarkGray)),
+        ]));
+
+        // Field 2: Unit
+        let unit_style = if *field_index == 2 {
+            Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let unit_str = match unit {
+            crate::models::IndicatorUnit::Count => "Count",
+            crate::models::IndicatorUnit::Minutes => "Minutes",
+            crate::models::IndicatorUnit::Dollars => "Dollars",
+            crate::models::IndicatorUnit::Percent => "Percent",
+            crate::models::IndicatorUnit::Custom(_) => {
+                if unit_custom_buffer.is_empty() {
+                    "Custom: _"
+                } else {
+                    unit_custom_buffer.as_str()
+                }
+            }
+        };
+        items.push(Line::from(vec![
+            Span::styled("  Unit: ", Style::default()),
+            Span::styled(unit_str, unit_style),
+            Span::styled(" (C=Count, M=Minutes, D=Dollars, P=Percent, U=Custom)", Style::default().fg(Color::DarkGray)),
+        ]));
+
+        // Field 3: Target
+        let target_style = if *field_index == 3 {
+            Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        items.push(Line::from(vec![
+            Span::styled("  Target: ", Style::default()),
+            Span::styled(
+                if target_buffer.is_empty() {
+                    "(optional)".to_string()
+                } else {
+                    format!("{}│", target_buffer)
+                },
+                target_style,
+            ),
+        ]));
+
+        // Field 4: Direction
+        let direction_style = if *field_index == 4 {
+            Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let direction_str = match direction {
+            crate::models::IndicatorDirection::HigherIsBetter => "Higher is Better ↑",
+            crate::models::IndicatorDirection::LowerIsBetter => "Lower is Better ↓",
+            crate::models::IndicatorDirection::WithinRange => "Within Range ↔",
+        };
+        items.push(Line::from(vec![
+            Span::styled("  Direction: ", Style::default()),
+            Span::styled(direction_str, direction_style),
+            Span::styled(" (H=Higher, L=Lower, R=Range)", Style::default().fg(Color::DarkGray)),
+        ]));
+
+        // Field 5: Notes
+        let notes_style = if *field_index == 5 {
+            Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        items.push(Line::from(vec![
+            Span::styled("  Notes: ", Style::default()),
+            Span::styled(
+                if notes_buffer.is_empty() {
+                    "(optional)".to_string()
+                } else {
+                    format!("{}│", notes_buffer)
+                },
+                notes_style,
+            ),
+        ]));
+
+        // Create the paragraph with all items
+        let content = Paragraph::new(items).block(
+            Block::default()
+                .title(" Create New Indicator ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan)),
+        );
+
+        // Render the content
+        f.render_widget(content, modal_area);
+
+        // Render help text at the bottom
+        let help_text = vec![Line::from(vec![
+            Span::styled("Tab", Style::default().fg(Color::Green)),
+            Span::raw(": Next Field | "),
+            Span::styled("Enter", Style::default().fg(Color::Green)),
+            Span::raw(": Create Indicator | "),
+            Span::styled("Esc", Style::default().fg(Color::Red)),
+            Span::raw(": Cancel"),
+        ])];
+
+        let help = Paragraph::new(help_text)
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(Alignment::Center);
+
+        // Position help text at bottom of modal
+        let help_area = Rect {
+            x: modal_area.x + 2,
+            y: modal_area.y + modal_area.height - 2,
+            width: modal_area.width - 4,
+            height: 1,
+        };
+        f.render_widget(help, help_area);
+    }
+}
+
 fn render_goal_editor(f: &mut Frame, area: Rect, app: &App) {
     if let InputMode::GoalEditing {
         outcome_type,
@@ -743,10 +1344,7 @@ fn render_goal_editor(f: &mut Frame, area: Rect, app: &App) {
         f.render_widget(input, modal_area);
 
         // Show cursor at the end of the text
-        f.set_cursor(
-            modal_area.x + 1 + buffer.len() as u16,
-            modal_area.y + 1,
-        );
+        f.set_cursor(modal_area.x + 1 + buffer.len() as u16, modal_area.y + 1);
     }
 }
 
@@ -830,7 +1428,10 @@ fn render_vision_editor(f: &mut Frame, area: Rect, app: &App) {
 
         // Render help text at the bottom
         let help_text = vec![Line::from(vec![
-            Span::styled(format!("{}+Enter", get_modifier_key()), Style::default().fg(Color::Green)),
+            Span::styled(
+                format!("{}+Enter", get_modifier_key()),
+                Style::default().fg(Color::Green),
+            ),
             Span::raw(": Save | "),
             Span::styled("Esc", Style::default().fg(Color::Red)),
             Span::raw(": Cancel | "),
@@ -873,12 +1474,22 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
             Span::raw("Enter: Save | "),
             Span::raw("Esc: Cancel"),
         ])
+    } else if matches!(app.input_mode, InputMode::ObjectiveSelection { .. }) {
+        Line::from(vec![
+            Span::raw("j/k: Navigate | "),
+            Span::raw("Enter: Select | "),
+            Span::raw("n: None | "),
+            Span::raw("Esc: Cancel"),
+        ])
     } else if matches!(app.input_mode, InputMode::GoalEditing { .. }) {
         Line::from(vec![
             Span::raw("Enter/F2/Ctrl+S: Save | "),
             Span::raw("Esc: Cancel"),
         ])
-    } else if matches!(app.input_mode, InputMode::VisionEditing { .. } | InputMode::Reflecting { .. }) {
+    } else if matches!(
+        app.input_mode,
+        InputMode::VisionEditing { .. } | InputMode::Reflecting { .. }
+    ) {
         Line::from(vec![
             Span::raw(format!("{}+Enter/Ctrl+S/F2: Save | ", get_modifier_key())),
             Span::raw("Esc: Cancel | "),
@@ -904,7 +1515,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
                 } else {
                     "No templates | ".to_string()
                 };
-                
+
                 Line::from(vec![
                     Span::styled("Morning Mode: ", Style::default().fg(Color::Yellow)),
                     Span::raw("y: Quick-fill yesterday | "),
@@ -912,21 +1523,21 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
                     Span::raw("Tab: Switch | "),
                     Span::raw("e: Edit | "),
                     Span::raw("s: Save | "),
-                Span::raw("q: Quit | "),
+                    Span::raw("q: Quit | "),
                     Span::raw("?: Help"),
                 ])
             }
             crate::models::RitualPhase::Evening => {
-                let total_actions = app.goals.work.actions.len() + 
-                                  app.goals.health.actions.len() + 
-                                  app.goals.family.actions.len();
-                                  
+                let total_actions = app.goals.work.actions.len()
+                    + app.goals.health.actions.len()
+                    + app.goals.family.actions.len();
+
                 let quick_complete_text = match total_actions {
                     0..=9 => format!("1-{}: Quick complete | ", total_actions),
                     10..=15 => "1-9, a-f: Quick complete | ".to_string(),
                     _ => "1-9, a-f: Quick complete | ".to_string(), // Max 15 supported
                 };
-                
+
                 Line::from(vec![
                     Span::styled("Evening Mode: ", Style::default().fg(Color::Blue)),
                     Span::raw(quick_complete_text),
@@ -934,7 +1545,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
                     Span::raw("d: Summary | "),
                     Span::raw("Tab: Switch | "),
                     Span::raw("s: Save | "),
-                Span::raw("q: Quit | "),
+                    Span::raw("q: Quit | "),
                     Span::raw("?: Help"),
                 ])
             }
@@ -945,6 +1556,7 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
                 Span::raw("e: Edit | "),
                 Span::raw("a: Add | "),
                 Span::raw("d: Delete | "),
+                Span::raw("o: Objectives | "),
                 Span::raw("t/T: Templates | "),
                 Span::raw("y: Yesterday | "),
                 Span::raw("m/n: Phase | "),
@@ -1030,7 +1642,10 @@ fn render_reflection_modal(f: &mut Frame, area: Rect, app: &App) {
 
         // Render help text
         let help_text = vec![Line::from(vec![
-            Span::styled(format!("{}+Enter", get_modifier_key()), Style::default().fg(Color::Green)),
+            Span::styled(
+                format!("{}+Enter", get_modifier_key()),
+                Style::default().fg(Color::Green),
+            ),
             Span::raw(": Save | "),
             Span::styled("Esc", Style::default().fg(Color::Red)),
             Span::raw(": Cancel | "),

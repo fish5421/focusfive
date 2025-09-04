@@ -11,12 +11,16 @@ pub const MAX_VISION_LENGTH: usize = 1000;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Action {
     #[serde(default = "Action::generate_id")]
-    pub id: String,             // UUID for stable identification
+    pub id: String, // UUID for stable identification
     pub text: String,
-    pub completed: bool,
+    pub completed: bool, // Mirror of status for compatibility (completed = status == Done)
+    #[serde(default = "Action::default_status")]
+    pub status: ActionStatus, // Rich status tracking
+    #[serde(default = "Action::default_origin")]
+    pub origin: ActionOrigin, // How this action was created
     #[serde(default = "chrono::Utc::now")]
     pub created: chrono::DateTime<chrono::Utc>,
-    #[serde(default = "chrono::Utc::now")] 
+    #[serde(default = "chrono::Utc::now")]
     pub modified: chrono::DateTime<chrono::Utc>,
 }
 
@@ -26,23 +30,43 @@ impl Action {
         uuid::Uuid::new_v4().to_string()
     }
 
+    /// Default status for new actions
+    fn default_status() -> ActionStatus {
+        ActionStatus::Planned
+    }
+
+    /// Default origin for new actions
+    fn default_origin() -> ActionOrigin {
+        ActionOrigin::Manual
+    }
+
     /// Create a new empty action with default values
     pub fn new_empty() -> Self {
         let now = chrono::Utc::now();
-        Action {
+        let mut action = Action {
             id: Self::generate_id(),
             text: String::new(),
             completed: false,
+            status: ActionStatus::Planned,
+            origin: ActionOrigin::Manual,
             created: now,
             modified: now,
-        }
+        };
+        action.sync_completed_from_status();
+        action
     }
 
     /// Create an action from markdown parsing (preserves completion status)
     pub fn from_markdown(text: String, completed: bool) -> Self {
         let mut action = Self::new(text);
         action.completed = completed;
-        // Status will be set by metadata reconciliation
+        // Set status based on completed field for backward compatibility
+        action.status = if completed {
+            ActionStatus::Done
+        } else {
+            ActionStatus::Planned
+        };
+        action.sync_completed_from_status();
         action
     }
 
@@ -57,14 +81,61 @@ impl Action {
             );
             text.truncate(MAX_ACTION_LENGTH);
         }
-        
+
         let now = chrono::Utc::now();
-        Action {
+        let mut action = Action {
             id: Self::generate_id(),
             text,
             completed: false,
+            status: ActionStatus::Planned,
+            origin: ActionOrigin::Manual,
             created: now,
             modified: now,
+        };
+        action.sync_completed_from_status();
+        action
+    }
+
+    /// Create action with specific origin (for templates, carry-over, etc.)
+    pub fn new_with_origin(text: String, origin: ActionOrigin) -> Self {
+        let mut action = Self::new(text);
+        action.origin = origin;
+        action
+    }
+
+    /// Cycle to next status: Planned → InProgress → Done → Skipped → Blocked → Planned
+    pub fn cycle_status(&mut self) {
+        self.status = match self.status {
+            ActionStatus::Planned => ActionStatus::InProgress,
+            ActionStatus::InProgress => ActionStatus::Done,
+            ActionStatus::Done => ActionStatus::Skipped,
+            ActionStatus::Skipped => ActionStatus::Blocked,
+            ActionStatus::Blocked => ActionStatus::Planned,
+        };
+        self.sync_completed_from_status();
+        self.modified = chrono::Utc::now();
+    }
+
+    /// Set status and sync completed field
+    pub fn set_status(&mut self, status: ActionStatus) {
+        self.status = status;
+        self.sync_completed_from_status();
+        self.modified = chrono::Utc::now();
+    }
+
+    /// Sync completed field with status (completed = status == Done)
+    fn sync_completed_from_status(&mut self) {
+        self.completed = self.status == ActionStatus::Done;
+    }
+
+    /// Get status display character for UI
+    pub fn status_char(&self) -> char {
+        match self.status {
+            ActionStatus::Planned => ' ',
+            ActionStatus::InProgress => '→',
+            ActionStatus::Done => '✓',
+            ActionStatus::Skipped => '~',
+            ActionStatus::Blocked => '✗',
         }
     }
 }
@@ -120,7 +191,7 @@ impl OutcomeType {
 pub struct Outcome {
     pub outcome_type: OutcomeType,
     pub goal: Option<String>,
-    pub actions: Vec<Action>,  // Now supports 1-5 actions
+    pub actions: Vec<Action>,       // Now supports 1-5 actions
     pub reflection: Option<String>, // Evening reflection note
 }
 
@@ -133,7 +204,7 @@ impl Outcome {
                 Action::new(String::new()),
                 Action::new(String::new()),
                 Action::new(String::new()),
-            ],  // Default to 3 actions for backward compatibility
+            ], // Default to 3 actions for backward compatibility
             reflection: None,
         }
     }
@@ -249,9 +320,7 @@ impl DailyGoals {
         // Find outcomes needing attention (< 50% complete)
         let needs_attention: Vec<String> = by_outcome
             .iter()
-            .filter(|(_, done, total)| {
-                *total > 0 && (*done as f32 / *total as f32) < 0.5
-            })
+            .filter(|(_, done, total)| *total > 0 && (*done as f32 / *total as f32) < 0.5)
             .map(|(name, _, _)| name.clone())
             .collect();
 
@@ -328,7 +397,7 @@ impl FiveYearVision {
 /// Action templates for quick reuse of common action patterns
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ActionTemplates {
-    /// Map of template name to list of action texts (up to 3 per template)
+    /// Map of template name to list of action texts (up to 5 per template)
     pub templates: HashMap<String, Vec<String>>,
     pub created: NaiveDate,
     pub modified: NaiveDate,
@@ -351,23 +420,23 @@ impl ActionTemplates {
     }
 
     /// Add or update a template
-    pub fn add_template(&mut self, name: String, actions: Vec<String>) {
-        // Limit to 3 actions per template
-        let actions: Vec<String> = actions
-            .into_iter()
-            .take(3)
-            .map(|s| {
-                if s.len() > MAX_ACTION_LENGTH {
-                    s.chars().take(MAX_ACTION_LENGTH).collect()
-                } else {
-                    s
-                }
-            })
-            .collect();
+pub fn add_template(&mut self, name: String, actions: Vec<String>) {
+    // Limit to 5 actions per template
+    let actions: Vec<String> = actions
+        .into_iter()
+        .take(5)
+        .map(|s| {
+            if s.len() > MAX_ACTION_LENGTH {
+                s.chars().take(MAX_ACTION_LENGTH).collect()
+            } else {
+                s
+            }
+        })
+        .collect();
 
-        self.templates.insert(name, actions);
-        self.modified = chrono::Local::now().date_naive();
-    }
+    self.templates.insert(name, actions);
+    self.modified = chrono::Local::now().date_naive();
+}
 
     /// Remove a template
     pub fn remove_template(&mut self, name: &str) -> bool {
@@ -395,27 +464,27 @@ impl ActionTemplates {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub goals_dir: String,
-    pub data_root: String,  // NEW: parent directory for JSON/NDJSON stores
+    pub data_root: String, // NEW: parent directory for JSON/NDJSON stores
 }
 
 /// Action metadata stored in sidecar JSON files
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionMeta {
-    pub id: String,  // UUID as string
-    pub status: ActionMetaStatus,
+    pub id: String, // UUID as string
+    pub status: ActionStatus,
     pub origin: ActionOrigin,
     pub estimated_min: Option<u32>,
     pub actual_min: Option<u32>,
     pub priority: Option<u32>,
     pub tags: Vec<String>,
-    pub objective_id: Option<String>,  // Link to objective UUID
+    pub objective_id: Option<String>, // Link to objective UUID
 }
 
 impl Default for ActionMeta {
     fn default() -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            status: ActionMetaStatus::Planned,
+            status: ActionStatus::Planned,
             origin: ActionOrigin::Manual,
             estimated_min: None,
             actual_min: None,
@@ -427,8 +496,8 @@ impl Default for ActionMeta {
 }
 
 /// Status for rich action tracking
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ActionMetaStatus {
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ActionStatus {
     Planned,
     InProgress,
     Done,
@@ -461,41 +530,53 @@ impl DayMeta {
         let now = chrono::Utc::now();
         Self {
             version: 1,
-            work: goals.work.actions.iter().map(|action| {
-                let mut meta = ActionMeta::default();
-                meta.id = action.id.clone();
-                meta.status = if action.completed {
-                    ActionMetaStatus::Done
-                } else {
-                    ActionMetaStatus::Planned
-                };
-                meta
-            }).collect(),
-            health: goals.health.actions.iter().map(|action| {
-                let mut meta = ActionMeta::default();
-                meta.id = action.id.clone();
-                meta.status = if action.completed {
-                    ActionMetaStatus::Done
-                } else {
-                    ActionMetaStatus::Planned
-                };
-                meta
-            }).collect(),
-            family: goals.family.actions.iter().map(|action| {
-                let mut meta = ActionMeta::default();
-                meta.id = action.id.clone();
-                meta.status = if action.completed {
-                    ActionMetaStatus::Done
-                } else {
-                    ActionMetaStatus::Planned
-                };
-                meta
-            }).collect(),
+            work: goals
+                .work
+                .actions
+                .iter()
+                .map(|action| ActionMeta {
+                    id: action.id.clone(),
+                    status: if action.completed {
+                        ActionStatus::Done
+                    } else {
+                        ActionStatus::Planned
+                    },
+                    ..ActionMeta::default()
+                })
+                .collect(),
+            health: goals
+                .health
+                .actions
+                .iter()
+                .map(|action| ActionMeta {
+                    id: action.id.clone(),
+                    status: if action.completed {
+                        ActionStatus::Done
+                    } else {
+                        ActionStatus::Planned
+                    },
+                    ..ActionMeta::default()
+                })
+                .collect(),
+            family: goals
+                .family
+                .actions
+                .iter()
+                .map(|action| ActionMeta {
+                    id: action.id.clone(),
+                    status: if action.completed {
+                        ActionStatus::Done
+                    } else {
+                        ActionStatus::Planned
+                    },
+                    ..ActionMeta::default()
+                })
+                .collect(),
             created: now,
             modified: now,
         }
     }
-    
+
     /// Reconcile metadata with current action counts
     pub fn reconcile_with_goals(&mut self, goals: &DailyGoals) {
         Self::reconcile_outcome_meta(&mut self.work, &goals.work);
@@ -503,48 +584,48 @@ impl DayMeta {
         Self::reconcile_outcome_meta(&mut self.family, &goals.family);
         self.modified = chrono::Utc::now();
     }
-    
+
     fn reconcile_outcome_meta(meta_vec: &mut Vec<ActionMeta>, outcome: &Outcome) {
         let target_len = outcome.actions.len();
         let current_len = meta_vec.len();
-        
+
         if current_len < target_len {
             // Add new metadata entries for new actions
             for i in current_len..target_len {
                 let action = &outcome.actions[i];
-                let mut meta = ActionMeta::default();
-                
-                // Use the action's ID if it has one, otherwise generate new
-                meta.id = action.id.clone();
-                
-                // Set status based on completion
-                meta.status = if action.completed {
-                    ActionMetaStatus::Done
-                } else {
-                    ActionMetaStatus::Planned
+
+                let meta = ActionMeta {
+                    id: action.id.clone(),
+                    status: if action.completed {
+                        ActionStatus::Done
+                    } else {
+                        ActionStatus::Planned
+                    },
+                    ..ActionMeta::default()
                 };
-                
+
                 meta_vec.push(meta);
             }
         } else if current_len > target_len {
             // Truncate excess metadata
             meta_vec.truncate(target_len);
         }
-        
+
         // Ensure IDs are synced for existing entries
         for (i, action) in outcome.actions.iter().enumerate() {
             if i < meta_vec.len() {
                 // Preserve the action's ID
                 meta_vec[i].id = action.id.clone();
-                
+
                 // Update status if action completion changed but metadata hasn't been manually edited
-                if action.completed && meta_vec[i].status == ActionMetaStatus::Planned {
-                    meta_vec[i].status = ActionMetaStatus::Done;
-                } else if !action.completed && meta_vec[i].status == ActionMetaStatus::Done {
+                if action.completed && meta_vec[i].status == ActionStatus::Planned {
+                    meta_vec[i].status = ActionStatus::Done;
+                } else if !action.completed && meta_vec[i].status == ActionStatus::Done {
                     // If unchecked, revert to Planned unless it's in progress or blocked
-                    if meta_vec[i].status != ActionMetaStatus::InProgress 
-                        && meta_vec[i].status != ActionMetaStatus::Blocked {
-                        meta_vec[i].status = ActionMetaStatus::Planned;
+                    if meta_vec[i].status != ActionStatus::InProgress
+                        && meta_vec[i].status != ActionStatus::Blocked
+                    {
+                        meta_vec[i].status = ActionStatus::Planned;
                     }
                 }
             }
@@ -564,16 +645,16 @@ pub enum ObjectiveStatus {
 /// Long-term objective that can be linked to daily actions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Objective {
-    pub id: String,                             // UUID as string
-    pub domain: OutcomeType,                    // Work|Health|Family
-    pub title: String,                          // Brief title
-    pub description: Option<String>,            // Detailed description
-    pub start: NaiveDate,                       // Start date
-    pub end: Option<NaiveDate>,                 // End date (optional for open-ended)
-    pub status: ObjectiveStatus,                // Current status
-    pub created: chrono::DateTime<chrono::Utc>, // Creation timestamp
-    pub modified: chrono::DateTime<chrono::Utc>,// Last modification timestamp
-    pub parent_id: Option<String>,              // For hierarchical objectives
+    pub id: String,                              // UUID as string
+    pub domain: OutcomeType,                     // Work|Health|Family
+    pub title: String,                           // Brief title
+    pub description: Option<String>,             // Detailed description
+    pub start: NaiveDate,                        // Start date
+    pub end: Option<NaiveDate>,                  // End date (optional for open-ended)
+    pub status: ObjectiveStatus,                 // Current status
+    pub created: chrono::DateTime<chrono::Utc>,  // Creation timestamp
+    pub modified: chrono::DateTime<chrono::Utc>, // Last modification timestamp
+    pub parent_id: Option<String>,               // For hierarchical objectives
 }
 
 impl Objective {
@@ -638,19 +719,19 @@ pub enum IndicatorDirection {
 }
 
 /// Definition of a key performance indicator
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct IndicatorDef {
-    pub id: String,                             // UUID as string
-    pub name: String,                           // Human-readable name
-    pub kind: IndicatorKind,                    // Leading or Lagging
-    pub unit: IndicatorUnit,                    // Unit of measurement
-    pub objective_id: Option<String>,           // Link to objective
+    pub id: String,                              // UUID as string
+    pub name: String,                            // Human-readable name
+    pub kind: IndicatorKind,                     // Leading or Lagging
+    pub unit: IndicatorUnit,                     // Unit of measurement
+    pub objective_id: Option<String>,            // Link to objective
     pub target: Option<f64>,                     // Target value
-    pub direction: IndicatorDirection,          // Optimization direction
-    pub active: bool,                           // Is indicator active
-    pub created: chrono::DateTime<chrono::Utc>, // Creation timestamp
-    pub modified: chrono::DateTime<chrono::Utc>,// Last modification
-    pub lineage_of: Option<String>,             // Previous version ID
+    pub direction: IndicatorDirection,           // Optimization direction
+    pub active: bool,                            // Is indicator active
+    pub created: chrono::DateTime<chrono::Utc>,  // Creation timestamp
+    pub modified: chrono::DateTime<chrono::Utc>, // Last modification
+    pub lineage_of: Option<String>,              // Previous version ID
     pub notes: Option<String>,                   // Additional notes
 }
 
@@ -709,7 +790,7 @@ pub struct Observation {
     pub unit: IndicatorUnit,                    // Unit (should match indicator)
     pub source: ObservationSource,              // How was it recorded
     pub action_id: Option<String>,              // Link to action that produced it
-    pub note: Option<String>,                    // Optional note
+    pub note: Option<String>,                   // Optional note
     pub created: chrono::DateTime<chrono::Utc>, // When recorded
 }
 
@@ -741,21 +822,21 @@ pub enum ReviewPeriod {
 /// A decision made during a review
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Decision {
-    pub summary: String,                   // Brief summary of decision
-    pub objective_id: Option<String>,      // Link to objective
-    pub indicator_id: Option<String>,      // Link to indicator
-    pub rationale: Option<String>,         // Reasoning behind decision
+    pub summary: String,              // Brief summary of decision
+    pub objective_id: Option<String>, // Link to objective
+    pub indicator_id: Option<String>, // Link to indicator
+    pub rationale: Option<String>,    // Reasoning behind decision
 }
 
 /// Weekly review data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Review {
-    pub id: String,                             // UUID as string
-    pub date: NaiveDate,                        // Date of review
-    pub period: ReviewPeriod,                   // Review period type
-    pub notes: Option<String>,                  // General notes
-    pub score_1_to_5: u8,                       // Self-assessment score
-    pub decisions: Vec<Decision>,               // Decisions made
+    pub id: String,               // UUID as string
+    pub date: NaiveDate,          // Date of review
+    pub period: ReviewPeriod,     // Review period type
+    pub notes: Option<String>,    // General notes
+    pub score_1_to_5: u8,         // Self-assessment score
+    pub decisions: Vec<Decision>, // Decisions made
 }
 
 impl Review {
@@ -819,7 +900,10 @@ impl Config {
                 .to_string()
         };
 
-        Ok(Self { goals_dir, data_root })
+        Ok(Self {
+            goals_dir,
+            data_root,
+        })
     }
 
     /// Safe default that won't panic

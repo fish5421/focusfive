@@ -80,7 +80,10 @@ fn test_indicator_serialization() -> Result<()> {
     assert_eq!(deserialized.indicators.len(), 3);
     assert_eq!(deserialized.indicators[0].name, "Qualified Leads (7d)");
     assert_eq!(deserialized.indicators[0].kind, IndicatorKind::Leading);
-    assert_eq!(deserialized.indicators[1].direction, IndicatorDirection::LowerIsBetter);
+    assert_eq!(
+        deserialized.indicators[1].direction,
+        IndicatorDirection::LowerIsBetter
+    );
     assert!(!deserialized.indicators[2].active);
 
     // Test Custom unit type

@@ -1,7 +1,6 @@
 use crate::models::{
-    Action, ActionTemplates, Config, DailyGoals, DayMeta, FiveYearVision, 
-    IndicatorDef, IndicatorsData, Observation, ObjectivesData, Outcome,
-    Review, ReviewData
+    Action, ActionTemplates, Config, DailyGoals, DayMeta, FiveYearVision, IndicatorsData,
+    ObjectivesData, Observation, Outcome, Review, ReviewData,
 };
 use anyhow::{Context, Result};
 use chrono::{Local, NaiveDate};
@@ -71,11 +70,12 @@ pub fn parse_markdown(content: &str) -> Result<DailyGoals> {
         } else if line.starts_with("- [") {
             // Parse action
             if let Some(outcome) = current_outcome.as_mut() {
-                if outcome.actions.len() < 5 {  // Max 5 actions per outcome
+                if outcome.actions.len() < 5 {
+                    // Max 5 actions per outcome
                     let (completed, text) = parse_action_line(line).with_context(|| {
                         format!("Failed to parse action on line {}", line_num + 1)
                     })?;
-                    
+
                     // For existing files with pre-allocated actions
                     if action_index < outcome.actions.len() {
                         outcome.actions[action_index] = Action::from_markdown(text, completed);
@@ -164,7 +164,10 @@ fn extract_goal_from_header(header: &str) -> Option<String> {
 
 /// Parse an action line into completion status and text
 fn parse_action_line(line: &str) -> Result<(bool, String)> {
-    if let Some(text) = line.strip_prefix("- [x]").or_else(|| line.strip_prefix("- [X]")) {
+    if let Some(text) = line
+        .strip_prefix("- [x]")
+        .or_else(|| line.strip_prefix("- [X]"))
+    {
         Ok((true, text.trim().to_string()))
     } else if let Some(text) = line.strip_prefix("- [ ]") {
         Ok((false, text.trim().to_string()))
@@ -526,22 +529,26 @@ fn ensure_meta_dir(config: &Config) -> Result<PathBuf> {
 }
 
 /// Load or create day metadata aligned with the goals
-pub fn load_or_create_day_meta(date: NaiveDate, goals: &DailyGoals, config: &Config) -> Result<DayMeta> {
+pub fn load_or_create_day_meta(
+    date: NaiveDate,
+    goals: &DailyGoals,
+    config: &Config,
+) -> Result<DayMeta> {
     let meta_dir = ensure_meta_dir(config)?;
     let filename = format!("{}.meta.json", date.format("%Y-%m-%d"));
     let meta_path = meta_dir.join(&filename);
-    
+
     if meta_path.exists() {
         // Load existing metadata
         let content = fs::read_to_string(&meta_path)
             .with_context(|| format!("Failed to read meta file: {}", meta_path.display()))?;
-        
+
         let mut meta: DayMeta = serde_json::from_str(&content)
             .with_context(|| format!("Failed to parse meta file: {}", meta_path.display()))?;
-        
+
         // Reconcile with current action counts
         meta.reconcile_with_goals(goals);
-        
+
         Ok(meta)
     } else {
         // Create new metadata aligned with goals
@@ -554,29 +561,37 @@ pub fn save_day_meta(date: NaiveDate, meta: &DayMeta, config: &Config) -> Result
     let meta_dir = ensure_meta_dir(config)?;
     let filename = format!("{}.meta.json", date.format("%Y-%m-%d"));
     let meta_path = meta_dir.join(&filename);
-    
+
     // Serialize to JSON
-    let json_content = serde_json::to_string_pretty(meta)
-        .context("Failed to serialize day metadata")?;
-    
+    let json_content =
+        serde_json::to_string_pretty(meta).context("Failed to serialize day metadata")?;
+
     // Write atomically
     atomic_write(&meta_path, json_content.as_bytes())?;
-    
+
     Ok(meta_path)
 }
 
 /// Load or create objectives from JSON file
 pub fn load_or_create_objectives(config: &Config) -> Result<ObjectivesData> {
     let objectives_path = Path::new(&config.data_root).join("objectives.json");
-    
+
     if objectives_path.exists() {
         // Load existing objectives
-        let content = fs::read_to_string(&objectives_path)
-            .with_context(|| format!("Failed to read objectives file: {}", objectives_path.display()))?;
-        
-        let objectives: ObjectivesData = serde_json::from_str(&content)
-            .with_context(|| format!("Failed to parse objectives file: {}", objectives_path.display()))?;
-        
+        let content = fs::read_to_string(&objectives_path).with_context(|| {
+            format!(
+                "Failed to read objectives file: {}",
+                objectives_path.display()
+            )
+        })?;
+
+        let objectives: ObjectivesData = serde_json::from_str(&content).with_context(|| {
+            format!(
+                "Failed to parse objectives file: {}",
+                objectives_path.display()
+            )
+        })?;
+
         Ok(objectives)
     } else {
         // Return default empty objectives
@@ -589,31 +604,39 @@ pub fn save_objectives(objectives: &ObjectivesData, config: &Config) -> Result<P
     // Ensure data_root directory exists
     fs::create_dir_all(&config.data_root)
         .with_context(|| format!("Failed to create data root directory: {}", config.data_root))?;
-    
+
     let objectives_path = Path::new(&config.data_root).join("objectives.json");
-    
+
     // Serialize to JSON
-    let json_content = serde_json::to_string_pretty(objectives)
-        .context("Failed to serialize objectives")?;
-    
+    let json_content =
+        serde_json::to_string_pretty(objectives).context("Failed to serialize objectives")?;
+
     // Write atomically
     atomic_write(&objectives_path, json_content.as_bytes())?;
-    
+
     Ok(objectives_path)
 }
 
 /// Load or create indicators from JSON file
 pub fn load_or_create_indicators(config: &Config) -> Result<IndicatorsData> {
     let indicators_path = Path::new(&config.data_root).join("indicators.json");
-    
+
     if indicators_path.exists() {
         // Load existing indicators
-        let content = fs::read_to_string(&indicators_path)
-            .with_context(|| format!("Failed to read indicators file: {}", indicators_path.display()))?;
-        
-        let indicators: IndicatorsData = serde_json::from_str(&content)
-            .with_context(|| format!("Failed to parse indicators file: {}", indicators_path.display()))?;
-        
+        let content = fs::read_to_string(&indicators_path).with_context(|| {
+            format!(
+                "Failed to read indicators file: {}",
+                indicators_path.display()
+            )
+        })?;
+
+        let indicators: IndicatorsData = serde_json::from_str(&content).with_context(|| {
+            format!(
+                "Failed to parse indicators file: {}",
+                indicators_path.display()
+            )
+        })?;
+
         Ok(indicators)
     } else {
         // Return default empty indicators
@@ -626,16 +649,16 @@ pub fn save_indicators(indicators: &IndicatorsData, config: &Config) -> Result<P
     // Ensure data_root directory exists
     fs::create_dir_all(&config.data_root)
         .with_context(|| format!("Failed to create data root directory: {}", config.data_root))?;
-    
+
     let indicators_path = Path::new(&config.data_root).join("indicators.json");
-    
+
     // Serialize to JSON
-    let json_content = serde_json::to_string_pretty(indicators)
-        .context("Failed to serialize indicators")?;
-    
+    let json_content =
+        serde_json::to_string_pretty(indicators).context("Failed to serialize indicators")?;
+
     // Write atomically
     atomic_write(&indicators_path, json_content.as_bytes())?;
-    
+
     Ok(indicators_path)
 }
 
@@ -643,75 +666,81 @@ pub fn save_indicators(indicators: &IndicatorsData, config: &Config) -> Result<P
 pub fn append_observation(obs: &Observation, config: &Config) -> Result<()> {
     use std::fs::OpenOptions;
     use std::io::Write;
-    
+
     // Ensure data_root directory exists
     fs::create_dir_all(&config.data_root)
         .with_context(|| format!("Failed to create data root directory: {}", config.data_root))?;
-    
+
     let observations_path = Path::new(&config.data_root).join("observations.ndjson");
-    
+
     // Serialize observation to JSON (single line)
-    let json_line = serde_json::to_string(obs)
-        .context("Failed to serialize observation")?;
-    
+    let json_line = serde_json::to_string(obs).context("Failed to serialize observation")?;
+
     // Open file in append mode (create if doesn't exist)
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&observations_path)
-        .with_context(|| format!("Failed to open observations file: {}", observations_path.display()))?;
-    
+        .with_context(|| {
+            format!(
+                "Failed to open observations file: {}",
+                observations_path.display()
+            )
+        })?;
+
     // Write the JSON line with newline
-    writeln!(file, "{}", json_line)
-        .context("Failed to write observation")?;
-    
+    writeln!(file, "{}", json_line).context("Failed to write observation")?;
+
     // Flush to ensure it's written
-    file.flush()
-        .context("Failed to flush observations file")?;
-    
+    file.flush().context("Failed to flush observations file")?;
+
     Ok(())
 }
 
 /// Read observations within a date range (streaming, not loading entire file)
 pub fn read_observations_range(
-    start: NaiveDate, 
-    end: NaiveDate, 
-    config: &Config
+    start: NaiveDate,
+    end: NaiveDate,
+    config: &Config,
 ) -> Result<Vec<Observation>> {
     use std::io::{BufRead, BufReader};
-    
+
     let observations_path = Path::new(&config.data_root).join("observations.ndjson");
-    
+
     // Return empty vec if file doesn't exist
     if !observations_path.exists() {
         return Ok(Vec::new());
     }
-    
-    let file = fs::File::open(&observations_path)
-        .with_context(|| format!("Failed to open observations file: {}", observations_path.display()))?;
-    
+
+    let file = fs::File::open(&observations_path).with_context(|| {
+        format!(
+            "Failed to open observations file: {}",
+            observations_path.display()
+        )
+    })?;
+
     let reader = BufReader::new(file);
     let mut observations = Vec::new();
-    
+
     // Stream line by line
     for line in reader.lines() {
         let line = line.context("Failed to read line from observations file")?;
-        
+
         // Skip empty lines
         if line.trim().is_empty() {
             continue;
         }
-        
+
         // Parse JSON
         let obs: Observation = serde_json::from_str(&line)
             .with_context(|| format!("Failed to parse observation: {}", line))?;
-        
+
         // Check if within date range
         if obs.when >= start && obs.when <= end {
             observations.push(obs);
         }
     }
-    
+
     Ok(observations)
 }
 
@@ -719,47 +748,51 @@ pub fn read_observations_range(
 pub fn save_review(week_iso: (i32, u32), review: &Review, config: &Config) -> Result<PathBuf> {
     // Ensure reviews directory exists
     let reviews_dir = Path::new(&config.data_root).join("reviews");
-    fs::create_dir_all(&reviews_dir)
-        .with_context(|| format!("Failed to create reviews directory: {}", reviews_dir.display()))?;
-    
+    fs::create_dir_all(&reviews_dir).with_context(|| {
+        format!(
+            "Failed to create reviews directory: {}",
+            reviews_dir.display()
+        )
+    })?;
+
     // Format filename as YYYY-Www.json (e.g., 2025-W35.json)
     let filename = format!("{}-W{:02}.json", week_iso.0, week_iso.1);
     let review_path = reviews_dir.join(&filename);
-    
+
     // Wrap review in ReviewData structure
     let review_data = ReviewData {
         version: 1,
         review: review.clone(),
     };
-    
+
     // Serialize to JSON
-    let json_content = serde_json::to_string_pretty(&review_data)
-        .context("Failed to serialize review")?;
-    
+    let json_content =
+        serde_json::to_string_pretty(&review_data).context("Failed to serialize review")?;
+
     // Write atomically
     atomic_write(&review_path, json_content.as_bytes())?;
-    
+
     Ok(review_path)
 }
 
 /// Load a review for a specific ISO week
 pub fn load_review(week_iso: (i32, u32), config: &Config) -> Result<Option<Review>> {
     let reviews_dir = Path::new(&config.data_root).join("reviews");
-    
+
     // Format filename as YYYY-Www.json
     let filename = format!("{}-W{:02}.json", week_iso.0, week_iso.1);
     let review_path = reviews_dir.join(&filename);
-    
+
     if !review_path.exists() {
         return Ok(None);
     }
-    
+
     // Read and parse the review file
     let content = fs::read_to_string(&review_path)
         .with_context(|| format!("Failed to read review file: {}", review_path.display()))?;
-    
+
     let review_data: ReviewData = serde_json::from_str(&content)
         .with_context(|| format!("Failed to parse review file: {}", review_path.display()))?;
-    
+
     Ok(Some(review_data.review))
 }
