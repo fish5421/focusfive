@@ -45,8 +45,15 @@ pub fn parse_markdown(content: &str) -> Result<DailyGoals> {
     }
 
     // Parse from header onwards, tracking line numbers for better errors
+    let mut skip_next = false;
     for (line_num, line) in lines.iter().enumerate().skip(header_index + 1) {
         let line = line.trim();
+
+        // Skip if this line was already processed as objective metadata
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
 
         // Skip empty lines
         if line.is_empty() {
@@ -76,12 +83,48 @@ pub fn parse_markdown(content: &str) -> Result<DailyGoals> {
                         format!("Failed to parse action on line {}", line_num + 1)
                     })?;
 
+                    // Create the action
+                    let mut action = Action::from_markdown(text, completed);
+                    
+                    // Check if next lines have objective metadata
+                    let mut check_line = line_num + 1;
+                    while check_line < lines.len() {
+                        let next_line = lines[check_line].trim();
+                        
+                        if next_line.starts_with("objective:") || next_line.starts_with("objectives:") {
+                            // Extract objective reference(s)
+                            let obj_prefix = if next_line.starts_with("objectives:") {
+                                "objectives:"
+                            } else {
+                                "objective:"
+                            };
+                            
+                            if let Some(obj_refs) = next_line.strip_prefix(obj_prefix) {
+                                // Split by comma for multiple objectives
+                                for obj_ref in obj_refs.split(',') {
+                                    let obj_id = obj_ref.trim().to_string();
+                                    if !obj_id.is_empty() {
+                                        action.add_objective_id(obj_id);
+                                    }
+                                }
+                                skip_next = true; // Skip the objective line in next iteration
+                            }
+                            check_line += 1;
+                        } else if next_line.is_empty() {
+                            // Keep checking if it's an empty line
+                            check_line += 1;
+                        } else {
+                            // Stop if we hit a non-objective, non-empty line
+                            break;
+                        }
+                    }
+
                     // For existing files with pre-allocated actions
                     if action_index < outcome.actions.len() {
-                        outcome.actions[action_index] = Action::from_markdown(text, completed);
+                        outcome.actions[action_index] = action;
                     } else {
                         // For new actions beyond the default 3
-                        outcome.actions.push(Action::from_markdown(text, completed));
+                        outcome.actions.push(action);
                     }
                     action_index += 1;
                 } else {
@@ -291,10 +334,22 @@ fn generate_outcome_section(content: &mut String, outcome: &Outcome) {
     };
     content.push_str(&header);
 
-    // Actions
+    // Actions with optional objective metadata
     for action in &outcome.actions {
         let checkbox = if action.completed { "[x]" } else { "[ ]" };
         content.push_str(&format!("- {} {}\n", checkbox, action.text));
+        
+        // Add objective metadata if present
+        let all_objectives = action.get_all_objective_ids();
+        if !all_objectives.is_empty() {
+            if all_objectives.len() == 1 {
+                // Single objective - use "objective:" for backward compatibility
+                content.push_str(&format!("  objective: {}\n", all_objectives[0]));
+            } else {
+                // Multiple objectives - use "objectives:" with comma-separated list
+                content.push_str(&format!("  objectives: {}\n", all_objectives.join(", ")));
+            }
+        }
     }
 }
 

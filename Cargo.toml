@@ -10,8 +10,8 @@ keywords = ["goals", "productivity", "tui", "terminal", "tracking"]
 categories = ["command-line-utilities", "productivity"]
 
 [dependencies]
-ratatui = "0.26"
-crossterm = "0.27"
+ratatui = "0.28"
+crossterm = "0.28"
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"

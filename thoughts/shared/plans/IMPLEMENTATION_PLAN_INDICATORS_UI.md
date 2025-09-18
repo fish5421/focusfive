@@ -210,16 +210,16 @@ impl DailyGoals {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Code compiles: `cargo build`
-- [ ] Unit tests pass: `cargo test models`
-- [ ] Type checking passes: `cargo check`
-- [ ] Linting passes: `cargo clippy`
+- [x] Code compiles: `cargo build`
+- [x] Unit tests pass: `cargo test models`
+- [x] Type checking passes: `cargo check`
+- [x] Linting passes: `cargo clippy`
 
 #### Manual Verification:
-- [ ] Actions can store indicator relationships
-- [ ] UUID generation works correctly
-- [ ] Markdown parsing handles new format
-- [ ] Backward compatibility maintained
+- [x] Actions can store indicator relationships
+- [x] UUID generation works correctly
+- [x] Markdown parsing handles new format
+- [x] Backward compatibility maintained
 
 ---
 
@@ -388,14 +388,14 @@ fn handle_key_event(key: KeyEvent, app: &mut TerminalApp) -> io::Result<()> {
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] UI compiles with new rendering: `cargo build`
-- [ ] Expansion state persists correctly: `cargo test ui_state`
+- [x] UI compiles with new rendering: `cargo build`
+- [x] Expansion state persists correctly: `cargo test ui_state`
 - [ ] Navigation works through expanded items: `cargo test navigation`
 
 #### Manual Verification:
-- [ ] Actions show expand/collapse symbols
-- [ ] Enter/e key toggles expansion
-- [ ] Indicators appear indented under actions
+- [x] Actions show expand/collapse symbols
+- [x] Enter/e key toggles expansion
+- [x] Indicators appear indented under actions
 - [ ] Navigation works through nested items
 
 ---
@@ -522,15 +522,15 @@ fn render_indicator_detail(f: &mut Frame, area: Rect, indicator: &Indicator, his
 ### Success Criteria:
 
 #### Automated Verification:
-- [ ] Progress widgets render correctly: `cargo test widgets`
-- [ ] Color coding works by percentage: `cargo test progress_colors`
-- [ ] Sparkline handles empty data: `cargo test sparkline_empty`
+- [x] Progress widgets render correctly: `cargo test widgets`
+- [x] Color coding works by percentage: `cargo test progress_colors`
+- [x] Sparkline handles empty data: `cargo test sparkline_empty`
 
 #### Manual Verification:
-- [ ] Progress bars show correct fill percentage
-- [ ] Colors change based on completion (red/yellow/green)
-- [ ] Sparklines display historical trends
-- [ ] Trend arrows show correct direction
+- [x] Progress bars show correct fill percentage
+- [x] Colors change based on completion (red/yellow/green)
+- [x] Sparklines display historical trends
+- [x] Trend arrows show correct direction
 
 ---
 

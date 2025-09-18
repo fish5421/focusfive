@@ -56,6 +56,8 @@ pub fn render_app(f: &mut Frame, app: &App) {
         render_indicator_manager(f, chunks[1], app);
     } else if matches!(app.input_mode, InputMode::IndicatorCreation { .. }) {
         render_indicator_creator(f, chunks[1], app);
+    } else if matches!(app.input_mode, InputMode::UpdatingIndicator(_)) {
+        render_update_overlay(f, chunks[1], app);
     } else {
         // Render phase-specific content
         match app.ritual_phase {
@@ -206,111 +208,290 @@ fn render_outcomes_pane(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(outcomes_list, area);
 }
 
+fn render_indicator_detail(f: &mut Frame, area: Rect, indicator: &crate::models::Indicator) {
+    use crate::widgets::IndicatorProgress;
+    use ratatui::widgets::{Block, Borders, Paragraph};
+    
+    // Create progress data from indicator
+    let current_value = indicator.current_value;
+    let target_value = indicator.target_value;
+    let history: Vec<f64> = indicator.history.iter()
+        .map(|entry| entry.value)
+        .collect();
+    
+    let progress = IndicatorProgress::new(current_value, target_value, history.clone());
+    
+    // Split area for different visualizations
+    let chunks = ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Vertical)
+        .constraints([
+            ratatui::layout::Constraint::Length(3),  // Title and value
+            ratatui::layout::Constraint::Length(3),  // Progress gauge
+            ratatui::layout::Constraint::Length(3),  // Trend and bar
+            ratatui::layout::Constraint::Min(3),     // Sparkline
+        ])
+        .split(area);
+    
+    // Title and current value
+    let title_text = format!(
+        "{}: {:.1}/{:.1} {}",
+        indicator.name,
+        current_value,
+        target_value,
+        &indicator.unit
+    );
+    let title = Paragraph::new(title_text)
+        .block(Block::default().borders(Borders::NONE));
+    f.render_widget(title, chunks[0]);
+    
+    // Progress gauge
+    let gauge = progress.render_gauge()
+        .label(format!("{:.0}%", progress.get_percentage()))
+        .block(Block::default().borders(Borders::NONE));
+    f.render_widget(gauge, chunks[1]);
+    
+    // Trend and progress bar
+    let trend_text = format!(
+        "{} {} {}",
+        progress.render_trend(),
+        progress.render_bar(),
+        match progress.trend {
+            crate::widgets::TrendDirection::Up => "Improving",
+            crate::widgets::TrendDirection::Down => "Declining",
+            crate::widgets::TrendDirection::Stable => "Stable",
+        }
+    );
+    let trend_widget = Paragraph::new(trend_text)
+        .block(Block::default().borders(Borders::NONE));
+    f.render_widget(trend_widget, chunks[2]);
+    
+    // Sparkline (if enough history)
+    if history.len() > 1 {
+        let sparkline_data = progress.get_sparkline_data();
+        let sparkline = ratatui::widgets::Sparkline::default()
+            .data(&sparkline_data)
+            .style(ratatui::style::Style::default().fg(ratatui::style::Color::Cyan))
+            .block(Block::default()
+                .borders(Borders::TOP)
+                .title("History"));
+        f.render_widget(sparkline, chunks[3]);
+    }
+}
+
 fn render_actions_pane(f: &mut Frame, area: Rect, app: &App) {
     let selected_outcome = app.get_selected_outcome();
 
     // Check if we're editing the current action
     let is_editing = matches!(app.input_mode, InputMode::Editing { .. });
+    
+    // Build display items with expansion
+    let mut display_items = Vec::new();
+    let mut _selectable_indices = Vec::new();
+    let mut _display_index = 0;
+    
+    for (idx, action) in selected_outcome.actions.iter().enumerate() {
+        // Determine if this action is being edited
+        let editing_this_action = is_editing && app.active_pane == Pane::Actions && idx == app.action_index;
+        
+        // Add expansion symbol if not editing
+        let symbol = if !editing_this_action && app.ui_state.is_expanded(&action.id) { 
+            "▼ " 
+        } else if !editing_this_action { 
+            "▶ " 
+        } else {
+            ""
+        };
+        
+        // Use status-based checkbox with visual indicators
+        let checkbox = match action.status {
+            crate::models::ActionStatus::Planned => "[ ]",
+            crate::models::ActionStatus::InProgress => "[→]",
+            crate::models::ActionStatus::Done => "[✓]",
+            crate::models::ActionStatus::Skipped => "[~]",
+            crate::models::ActionStatus::Blocked => "[✗]",
+        };
 
-    let items: Vec<ListItem> = selected_outcome
-        .actions
-        .iter()
-        .enumerate()
-        .map(|(i, action)| {
-            // Use status-based checkbox with visual indicators
-            let checkbox = match action.status {
-                crate::models::ActionStatus::Planned => "[ ]",
-                crate::models::ActionStatus::InProgress => "[→]",
-                crate::models::ActionStatus::Done => "[✓]",
-                crate::models::ActionStatus::Skipped => "[~]",
-                crate::models::ActionStatus::Blocked => "[✗]",
-            };
-
-            // Check if this action is being edited
-            let editing_this_action =
-                is_editing && app.active_pane == Pane::Actions && i == app.action_index;
-
-            let style = if editing_this_action {
-                // Blue background for edit mode
-                Style::default()
-                    .bg(Color::Blue)
-                    .add_modifier(Modifier::BOLD)
-            } else if app.active_pane == Pane::Actions && i == app.action_index {
-                Style::default()
-                    .bg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD)
-            } else if action.text.is_empty() {
-                Style::default().fg(Color::DarkGray)
-            } else {
-                // Color based on status
-                match action.status {
-                    crate::models::ActionStatus::Done => Style::default().fg(Color::Green),
-                    crate::models::ActionStatus::InProgress => Style::default().fg(Color::Yellow),
-                    crate::models::ActionStatus::Blocked => {
-                        Style::default().fg(Color::Red).add_modifier(Modifier::DIM)
-                    }
-                    crate::models::ActionStatus::Skipped => Style::default().fg(Color::DarkGray),
-                    crate::models::ActionStatus::Planned => Style::default(),
+        // Style for main action line
+        let style = if editing_this_action {
+            Style::default().bg(Color::Blue).add_modifier(Modifier::BOLD)
+        } else if app.active_pane == Pane::Actions && idx == app.action_index {
+            Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD)
+        } else if action.text.is_empty() {
+            Style::default().fg(Color::DarkGray)
+        } else {
+            match action.status {
+                crate::models::ActionStatus::Done => Style::default().fg(Color::Green),
+                crate::models::ActionStatus::InProgress => Style::default().fg(Color::Yellow),
+                crate::models::ActionStatus::Blocked => {
+                    Style::default().fg(Color::Red).add_modifier(Modifier::DIM)
                 }
-            };
+                crate::models::ActionStatus::Skipped => Style::default().fg(Color::DarkGray),
+                crate::models::ActionStatus::Planned => Style::default(),
+            }
+        };
 
-            let text = if editing_this_action {
-                // Show the edit buffer with cursor
-                if let InputMode::Editing { ref buffer, .. } = app.input_mode {
-                    format!("{}│", buffer)
-                } else {
-                    action.text.clone()
-                }
-            } else if action.text.is_empty() {
-                "(empty)".to_string()
+        // Text to display for action
+        let text = if editing_this_action {
+            // Show the edit buffer with cursor
+            if let InputMode::Editing { ref buffer, .. } = app.input_mode {
+                format!("{}│", buffer)
             } else {
                 action.text.clone()
-            };
-
-            // Get objective chip if action is linked to an objective
-            let objective_chip = if !editing_this_action {
-                let action_meta_list = match selected_outcome.outcome_type {
-                    crate::models::OutcomeType::Work => &app.day_meta.work,
-                    crate::models::OutcomeType::Health => &app.day_meta.health,
-                    crate::models::OutcomeType::Family => &app.day_meta.family,
-                };
-
-                if let Some(action_meta) = action_meta_list.get(i) {
-                    if let Some(ref objective_id) = action_meta.objective_id {
-                        // Find the objective by ID
-                        if let Some(objective) = app
-                            .objectives
-                            .objectives
-                            .iter()
-                            .find(|obj| obj.id == *objective_id)
-                        {
-                            format!(" ⟂ {}", objective.title)
-                        } else {
-                            String::new()
-                        }
+            }
+        } else if action.text.is_empty() {
+            "(empty)".to_string()
+        } else {
+            action.text.clone()
+        };
+        
+        // Main action line
+        let action_line = format!("{}{} {}", symbol, checkbox, text);
+        display_items.push(ListItem::new(action_line).style(style));
+        _selectable_indices.push((idx, None, None)); // Action level
+        _display_index += 1;
+        
+        // Add objectives and indicators if expanded and not editing
+        if !editing_this_action && app.ui_state.is_expanded(&action.id) {
+            let all_objective_ids = action.get_all_objective_ids();
+            
+            if !all_objective_ids.is_empty() {
+                // Display each linked objective
+                for (obj_idx, objective_id) in all_objective_ids.iter().enumerate() {
+                    // Determine prefix for tree display
+                    let prefix = if all_objective_ids.len() == 1 {
+                        "  └─"
+                    } else if obj_idx == all_objective_ids.len() - 1 {
+                        "  └─"
                     } else {
-                        String::new()
+                        "  ├─"
+                    };
+                    
+                    // Find the objective by ID
+                    if let Some(objective) = app.objectives.objectives.iter().find(|obj| obj.id == *objective_id) {
+                        // Objective line with icon
+                        let obj_line = format!("{} 📎 Objective: {}", prefix, objective.title);
+                        display_items.push(ListItem::new(obj_line).style(Style::default().fg(Color::Cyan)));
+                        _selectable_indices.push((idx, Some(obj_idx), None)); // Objective level
+                        _display_index += 1;
+                        
+                        // Add indicators for this objective (indented more for multiple objectives)
+                        let indicator_indent = if all_objective_ids.len() > 1 { "        " } else { "      " };
+                        if !objective.indicators.is_empty() {
+                        for (ind_idx, indicator_id) in objective.indicators.iter().enumerate() {
+                            // Find the indicator by ID
+                            if let Some(indicator_def) = app.indicators.indicators.iter().find(|ind| ind.id == *indicator_id) {
+                                // Fetch actual indicator value from observations
+                                let current_value = app.get_latest_indicator_value(indicator_id).unwrap_or(0.0);
+                                let target_value = indicator_def.target.unwrap_or(100.0);
+                                let history: Vec<f64> = vec![];  // Empty history for now
+                                
+                                let progress = crate::widgets::IndicatorProgress::new(
+                                    current_value,
+                                    target_value,
+                                    history
+                                );
+                                
+                                let percentage = progress.get_percentage();
+                                let trend = progress.render_trend();
+                                let bar = progress.render_bar();
+                                
+                                // Check if this indicator is selected
+                                let mut indicator_index = 0;
+                                let mut is_selected_indicator = false;
+                                
+                                // Calculate the global indicator index for this action
+                                for (o_idx, oid) in all_objective_ids.iter().enumerate() {
+                                    if o_idx < obj_idx {
+                                        // Count indicators in previous objectives
+                                        if let Some(prev_obj) = app.objectives.objectives.iter().find(|obj| obj.id == *oid) {
+                                            indicator_index += prev_obj.indicators.len();
+                                        }
+                                    } else if o_idx == obj_idx {
+                                        // Add current indicator index
+                                        indicator_index += ind_idx;
+                                        break;
+                                    }
+                                }
+                                
+                                // Check if this indicator is selected
+                                if app.active_pane == Pane::Actions 
+                                    && idx == app.action_index 
+                                    && app.ui_state.selected_indicator_index == Some(indicator_index) {
+                                    is_selected_indicator = true;
+                                }
+                                
+                                // Create indicator line with real progress visualization
+                                let indicator_line = format!("{}{} {} [{}] {}% {}", 
+                                    indicator_indent,
+                                    if ind_idx == objective.indicators.len() - 1 { "└─" } else { "├─" },
+                                    indicator_def.name,
+                                    bar,
+                                    percentage,
+                                    trend
+                                );
+                                
+                                // Apply highlighting if selected
+                                let indicator_style = if is_selected_indicator {
+                                    Style::default().bg(Color::Magenta).fg(Color::White).add_modifier(Modifier::BOLD)
+                                } else {
+                                    Style::default().fg(Color::Gray)
+                                };
+                                
+                                display_items.push(ListItem::new(indicator_line).style(indicator_style));
+                                _selectable_indices.push((idx, Some(obj_idx), Some(ind_idx))); // Indicator level
+                                _display_index += 1;
+                            }
+                        }
+                        
+                        // Add overall progress line
+                        let overall_progress = app.calculate_objective_progress(&objective);
+                        let progress_color = if overall_progress >= 100.0 {
+                            Color::Green
+                        } else if overall_progress >= 70.0 {
+                            Color::Yellow
+                        } else {
+                            Color::Red
+                        };
+                        let overall_line = format!("{}Overall Progress: {:.0}%", indicator_indent, overall_progress);
+                        display_items.push(ListItem::new(overall_line).style(Style::default().fg(progress_color).add_modifier(Modifier::BOLD)));
+                        _display_index += 1;
+                    } else {
+                        // No indicators defined
+                        let no_ind_line = format!("{}(No indicators defined)", indicator_indent);
+                        display_items.push(ListItem::new(no_ind_line).style(Style::default().fg(Color::DarkGray)));
+                        _display_index += 1;
                     }
                 } else {
-                    String::new()
+                    // Objective not found
+                    let not_found_line = format!("{} ⚠️ Objective '{}' not found", prefix, objective_id);
+                    display_items.push(ListItem::new(not_found_line).style(Style::default().fg(Color::Yellow)));
+                    _display_index += 1;
+                }
                 }
             } else {
-                String::new()
-            };
+                // Action has no objective linked
+                let no_obj_line = "  └─ (No objective linked)";
+                display_items.push(ListItem::new(no_obj_line).style(Style::default().fg(Color::DarkGray)));
+                _display_index += 1;
+            }
+        }
+    }
 
-            ListItem::new(format!("{} {}{}", checkbox, text, objective_chip)).style(style)
-        })
-        .collect();
-
-    let border_style = if app.active_pane == Pane::Actions {
+    let border_style = if app.ui_state.selected_indicator_index.is_some() {
+        Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)
+    } else if app.active_pane == Pane::Actions {
         Style::default().fg(Color::Cyan)
     } else {
         Style::default()
     };
 
-    let title = format!(" {} Actions ", selected_outcome.outcome_type.as_str());
+    let title = if app.ui_state.selected_indicator_index.is_some() {
+        format!(" {} Actions [INDICATOR MODE - j/k navigate, i update, ESC exit] ", selected_outcome.outcome_type.as_str())
+    } else {
+        format!(" {} Actions ", selected_outcome.outcome_type.as_str())
+    };
 
-    let actions_list = List::new(items).block(
+    let actions_list = List::new(display_items).block(
         Block::default()
             .title(title)
             .borders(Borders::ALL)
@@ -393,7 +574,29 @@ fn render_help(f: &mut Frame, area: Rect) {
         Line::from("  d          - Generate daily summary"),
         Line::from(""),
         Line::from(vec![Span::styled(
-            "Variable Actions (NEW!):",
+            "Indicators & Objectives:",
+            Style::default().add_modifier(Modifier::UNDERLINED),
+        )]),
+        Line::from("  o          - Link action to objective (in Actions pane)"),
+        Line::from("  Enter      - Expand/collapse action to show indicators"),
+        Line::from("  u/U        - Enter indicator mode (on action with indicators)"),
+        Line::from("  i          - Update selected indicator (when in indicator mode)"),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Indicator Update Mode:",
+            Style::default().add_modifier(Modifier::UNDERLINED),
+        )]),
+        Line::from("  0-9        - Type custom value directly"),
+        Line::from("  a          - Small increment (+1 count, +15 min, +10%)"),
+        Line::from("  s          - Medium increment (+5 count, +30 min, +25%)"),
+        Line::from("  d          - Large increment (+10 count, +60 min, +50%)"),
+        Line::from("  +/-        - Fine increment/decrement"),
+        Line::from("  c          - Clear value to start fresh"),
+        Line::from("  Enter      - Save update"),
+        Line::from("  Esc        - Cancel update"),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Variable Actions:",
             Style::default().add_modifier(Modifier::UNDERLINED),
         )]),
         Line::from("  • Each outcome can have 1-5 actions (flexible from fixed 3)"),
@@ -720,6 +923,15 @@ fn render_objective_selector(f: &mut Frame, area: Rect, app: &App) {
 
         // Clear the background
         f.render_widget(Clear, modal_area);
+        
+        // Get the current action's linked objectives
+        let current_action = match app.outcome_index {
+            0 => &app.goals.work.actions[app.action_index],
+            1 => &app.goals.health.actions[app.action_index],
+            2 => &app.goals.family.actions[app.action_index],
+            _ => return,
+        };
+        let linked_objectives = current_action.get_all_objective_ids();
 
         // Get objectives for the current domain
         let domain_objectives: Vec<&crate::models::Objective> = app
@@ -731,6 +943,21 @@ fn render_objective_selector(f: &mut Frame, area: Rect, app: &App) {
 
         // Build the list of objectives
         let mut items = Vec::new();
+        
+        // Add a status line showing how many objectives are linked
+        let linked_count = domain_objectives.iter()
+            .filter(|obj| linked_objectives.contains(&obj.id))
+            .count();
+        
+        if linked_count > 0 {
+            items.push(Line::from(vec![Span::styled(
+                format!("  {} objective{} linked to this action", 
+                        linked_count, 
+                        if linked_count == 1 { "" } else { "s" }),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::ITALIC),
+            )]));
+            items.push(Line::from(""));
+        }
 
         if domain_objectives.is_empty() {
             items.push(Line::from(vec![Span::styled(
@@ -740,10 +967,22 @@ fn render_objective_selector(f: &mut Frame, area: Rect, app: &App) {
             items.push(Line::from(""));
         } else {
             for (idx, objective) in domain_objectives.iter().enumerate() {
-                let style = if idx == *selection_index {
-                    Style::default()
-                        .bg(Color::DarkGray)
-                        .add_modifier(Modifier::BOLD)
+                let is_linked = linked_objectives.contains(&objective.id);
+                let is_selected = idx == *selection_index;
+                
+                let style = if is_selected {
+                    if is_linked {
+                        Style::default()
+                            .bg(Color::DarkGray)
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                            .bg(Color::DarkGray)
+                            .add_modifier(Modifier::BOLD)
+                    }
+                } else if is_linked {
+                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
                 };
@@ -754,6 +993,13 @@ fn render_objective_selector(f: &mut Frame, area: Rect, app: &App) {
                     crate::models::ObjectiveStatus::Paused => "⏸",
                     crate::models::ObjectiveStatus::Completed => "✓",
                     crate::models::ObjectiveStatus::Dropped => "✗",
+                };
+                
+                // Show checkmark with better visual feedback
+                let linked_indicator = if is_linked { 
+                    "☑ " // Using a checkbox character for better visibility
+                } else { 
+                    "☐ " // Empty checkbox
                 };
 
                 // Show title with optional description preview
@@ -768,9 +1014,22 @@ fn render_objective_selector(f: &mut Frame, area: Rect, app: &App) {
                 };
 
                 items.push(Line::from(vec![Span::styled(
-                    format!("  {} {}{}", status_char, objective.title, description_preview),
+                    format!("{}{} {}{}", linked_indicator, status_char, objective.title, description_preview),
                     style,
                 )]));
+                
+                // Add a hint for the selected item
+                if is_selected {
+                    let hint = if is_linked {
+                        "    Press Enter to unlink"
+                    } else {
+                        "    Press Enter to link"
+                    };
+                    items.push(Line::from(vec![Span::styled(
+                        hint,
+                        Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+                    )]));
+                }
             }
         }
 
@@ -781,7 +1040,7 @@ fn render_objective_selector(f: &mut Frame, area: Rect, app: &App) {
                 .bg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::Green)
+            Style::default().fg(Color::Yellow)
         };
         items.push(Line::from(vec![Span::styled(
             "  + Create New Objective",
@@ -792,7 +1051,7 @@ fn render_objective_selector(f: &mut Frame, area: Rect, app: &App) {
         let content = Paragraph::new(items).block(
             Block::default()
                 .title(format!(
-                    " Select Objective for {} ",
+                    " Select Objectives for {} Action ",
                     match domain {
                         crate::models::OutcomeType::Work => "Work",
                         crate::models::OutcomeType::Health => "Health",
@@ -812,14 +1071,14 @@ fn render_objective_selector(f: &mut Frame, area: Rect, app: &App) {
             Span::raw(": Down | "),
             Span::styled("k/↑", Style::default().fg(Color::Green)),
             Span::raw(": Up | "),
-            Span::styled("Enter", Style::default().fg(Color::Green)),
-            Span::raw(": Select | "),
+            Span::styled("Enter", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(": Toggle | "),
             Span::styled("i", Style::default().fg(Color::Green)),
             Span::raw(": Indicators | "),
-            Span::styled("n", Style::default().fg(Color::Green)),
-            Span::raw(": None | "),
+            Span::styled("c", Style::default().fg(Color::Yellow)),
+            Span::raw(": Clear All | "),
             Span::styled("Esc", Style::default().fg(Color::Red)),
-            Span::raw(": Cancel"),
+            Span::raw(": Done"),
         ])];
 
         let help = Paragraph::new(help_text)
@@ -1049,17 +1308,18 @@ fn render_indicator_manager(f: &mut Frame, area: Rect, app: &App) {
                 )]));
 
                 // Show notes if present and not editing
-                if !is_editing && indicator.notes.is_some() {
-                    let notes = indicator.notes.as_ref().unwrap();
-                    let notes_preview = if notes.len() > 60 {
-                        format!("    Notes: {}...", &notes[..57])
-                    } else {
-                        format!("    Notes: {}", notes)
-                    };
-                    items.push(Line::from(vec![Span::styled(
-                        notes_preview,
-                        Style::default().fg(Color::DarkGray),
-                    )]));
+                if !is_editing {
+                    if let Some(notes) = indicator.notes.as_ref() {
+                        let notes_preview = if notes.len() > 60 {
+                            format!("    Notes: {}...", &notes[..57])
+                        } else {
+                            format!("    Notes: {}", notes)
+                        };
+                        items.push(Line::from(vec![Span::styled(
+                            notes_preview,
+                            Style::default().fg(Color::DarkGray),
+                        )]));
+                    }
                 }
             }
         }
@@ -1549,23 +1809,36 @@ fn render_footer(f: &mut Frame, area: Rect, app: &App) {
                     Span::raw("?: Help"),
                 ])
             }
-            _ => Line::from(vec![
-                Span::raw("Tab: Switch | "),
-                Span::raw("j/k: Navigate | "),
-                Span::raw("Space: Toggle | "),
-                Span::raw("e: Edit | "),
-                Span::raw("a: Add | "),
-                Span::raw("d: Delete | "),
-                Span::raw("o: Objectives | "),
-                Span::raw("t/T: Templates | "),
-                Span::raw("y: Yesterday | "),
-                Span::raw("m/n: Phase | "),
-                Span::raw("v: Vision | "),
-                Span::raw("g: Goal | "),
-                Span::raw("s: Save | "),
-                Span::raw("q: Quit | "),
-                Span::raw("?: Help"),
-            ]),
+            _ => {
+                // Check if in indicator selection mode
+                if app.ui_state.selected_indicator_index.is_some() {
+                    Line::from(vec![
+                        Span::styled("INDICATOR MODE: ", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+                        Span::raw("j/k: Navigate indicators | "),
+                        Span::raw("u: Update value | "),
+                        Span::raw("Tab/ESC: Exit mode | "),
+                        Span::raw("?: Help"),
+                    ])
+                } else {
+                    Line::from(vec![
+                        Span::raw("Tab: Switch | "),
+                        Span::raw("j/k: Navigate | "),
+                        Span::raw("Space: Toggle | "),
+                        Span::raw("e: Edit | "),
+                        Span::raw("a: Add | "),
+                        Span::raw("d: Delete | "),
+                        Span::raw("o: Objectives | "),
+                        Span::raw("t/T: Templates | "),
+                        Span::raw("y: Yesterday | "),
+                        Span::raw("m/n: Phase | "),
+                        Span::raw("v: Vision | "),
+                        Span::raw("g: Goal | "),
+                        Span::raw("s: Save | "),
+                        Span::raw("q: Quit | "),
+                        Span::raw("?: Help"),
+                    ])
+                }
+            },
         }
     };
 
@@ -1602,6 +1875,121 @@ fn render_progress_gauge(f: &mut Frame, area: Rect, stats: &crate::models::Compl
         ));
 
     f.render_widget(gauge, area);
+}
+
+/// Render indicator update overlay
+fn render_update_overlay(f: &mut Frame, area: Rect, app: &App) {
+    if let InputMode::UpdatingIndicator(id) = &app.input_mode {
+        // Find the indicator
+        let indicator = app.indicators.indicators.iter()
+            .find(|ind| ind.id == *id);
+        
+        if let Some(indicator) = indicator {
+            // Create centered popup (60% width, 40% height)
+            let popup_area = centered_rect(60, 40, area);
+            f.render_widget(Clear, popup_area);
+            
+            let popup = Block::bordered()
+                .title(format!(" Update: {} ", indicator.name))
+                .border_style(Style::default().fg(Color::Yellow));
+            
+            let inner = popup.inner(popup_area);
+            f.render_widget(popup, popup_area);
+            
+            // Layout based on indicator type
+            let chunks = Layout::vertical([
+                Constraint::Length(3),   // Current/Target display
+                Constraint::Length(3),   // Progress visualization
+                Constraint::Length(4),   // Quick actions
+                Constraint::Length(3),   // Custom input
+                Constraint::Length(2),   // Help text
+            ]).split(inner);
+            
+            // Get current value from observations
+            let current_value = app.get_latest_indicator_value(id).unwrap_or(0.0);
+            
+            // Current and target values
+            let value_display = format!("Current: {:.1} {} | Target: {:.1} {}",
+                current_value,
+                match &indicator.unit {
+                    crate::models::IndicatorUnit::Count => "count",
+                    crate::models::IndicatorUnit::Minutes => "min",
+                    crate::models::IndicatorUnit::Dollars => "$",
+                    crate::models::IndicatorUnit::Percent => "%",
+                    crate::models::IndicatorUnit::Custom(s) => s.as_str(),
+                },
+                indicator.target.unwrap_or(100.0),
+                match &indicator.unit {
+                    crate::models::IndicatorUnit::Count => "count",
+                    crate::models::IndicatorUnit::Minutes => "min",
+                    crate::models::IndicatorUnit::Dollars => "$",
+                    crate::models::IndicatorUnit::Percent => "%",
+                    crate::models::IndicatorUnit::Custom(s) => s.as_str(),
+                }
+            );
+            f.render_widget(Paragraph::new(value_display).centered(), chunks[0]);
+            
+            // Progress visualization
+            use crate::widgets::IndicatorProgress;
+            let progress = IndicatorProgress::new(
+                current_value,
+                indicator.target.unwrap_or(100.0),
+                vec![] // Empty history for now
+            );
+            let progress_text = format!("[{}] {:.0}%", 
+                progress.render_bar(),
+                progress.get_percentage()
+            );
+            f.render_widget(
+                Paragraph::new(progress_text)
+                    .style(Style::default().fg(Color::Green))
+                    .centered(),
+                chunks[1]
+            );
+            
+            // Quick actions based on type
+            let quick_actions = match indicator.unit {
+                crate::models::IndicatorUnit::Count => {
+                    format!("[1] +1  [3] +3  [5] +5")
+                },
+                crate::models::IndicatorUnit::Minutes => {
+                    format!("[1] +30min  [2] +1hr  [3] +2hrs")
+                },
+                crate::models::IndicatorUnit::Percent => {
+                    format!("[2] 25%  [5] 50%  [7] 75%  [9] 100%")
+                },
+                _ => {
+                    format!("[+/-] Adjust value")
+                }
+            };
+            
+            f.render_widget(
+                Paragraph::new(quick_actions).centered(),
+                chunks[2]
+            );
+            
+            // Custom input field with cursor
+            let input_text = format!("{}│", app.ui_state.update_buffer);
+            let input = Paragraph::new(input_text)
+                .block(Block::bordered().title("Custom value"))
+                .style(Style::default().fg(Color::White));
+            f.render_widget(input, chunks[3]);
+            
+            // Help text
+            let help = match indicator.unit {
+                crate::models::IndicatorUnit::Count => "[Enter number] [Enter] Save [Esc] Cancel",
+                crate::models::IndicatorUnit::Minutes => "[Enter minutes] [Enter] Save [Esc] Cancel",
+                crate::models::IndicatorUnit::Percent => "[Enter 0-100] [Enter] Save [Esc] Cancel",
+                _ => "[Enter value] [Enter] Save [Esc] Cancel",
+            };
+            f.render_widget(
+                Paragraph::new(help)
+                    .style(Style::default().fg(Color::DarkGray))
+                    .centered(),
+                chunks[4]
+            );
+        }
+    }
 }
 
 /// Render reflection modal

@@ -18,10 +18,16 @@ pub struct Action {
     pub status: ActionStatus, // Rich status tracking
     #[serde(default = "Action::default_origin")]
     pub origin: ActionOrigin, // How this action was created
+    #[serde(default)]
+    pub objective_id: Option<String>, // DEPRECATED: Link to ONE objective (kept for compatibility)
+    #[serde(default)]
+    pub objective_ids: Vec<String>, // Link to MULTIPLE objectives
     #[serde(default = "chrono::Utc::now")]
     pub created: chrono::DateTime<chrono::Utc>,
     #[serde(default = "chrono::Utc::now")]
     pub modified: chrono::DateTime<chrono::Utc>,
+    #[serde(default)]
+    pub completed_at: Option<chrono::DateTime<chrono::Utc>>, // When completed
 }
 
 impl Action {
@@ -49,8 +55,11 @@ impl Action {
             completed: false,
             status: ActionStatus::Planned,
             origin: ActionOrigin::Manual,
+            objective_id: None,
+            objective_ids: Vec::new(),
             created: now,
             modified: now,
+            completed_at: None,
         };
         action.sync_completed_from_status();
         action
@@ -89,8 +98,11 @@ impl Action {
             completed: false,
             status: ActionStatus::Planned,
             origin: ActionOrigin::Manual,
+            objective_id: None,
+            objective_ids: Vec::new(),
             created: now,
             modified: now,
+            completed_at: None,
         };
         action.sync_completed_from_status();
         action
@@ -126,6 +138,12 @@ impl Action {
     /// Sync completed field with status (completed = status == Done)
     fn sync_completed_from_status(&mut self) {
         self.completed = self.status == ActionStatus::Done;
+        // Set completed_at when status becomes Done
+        if self.status == ActionStatus::Done && self.completed_at.is_none() {
+            self.completed_at = Some(chrono::Utc::now());
+        } else if self.status != ActionStatus::Done {
+            self.completed_at = None;
+        }
     }
 
     /// Get status display character for UI
@@ -136,6 +154,44 @@ impl Action {
             ActionStatus::Done => '✓',
             ActionStatus::Skipped => '~',
             ActionStatus::Blocked => '✗',
+        }
+    }
+    
+    /// Get all objective IDs (combines legacy single objective_id with new objective_ids)
+    pub fn get_all_objective_ids(&self) -> Vec<String> {
+        let mut ids = self.objective_ids.clone();
+        
+        // Include the legacy single objective_id if present and not already in the list
+        if let Some(single_id) = &self.objective_id {
+            if !ids.contains(single_id) {
+                ids.push(single_id.clone());
+            }
+        }
+        
+        ids
+    }
+    
+    /// Add an objective ID to this action
+    pub fn add_objective_id(&mut self, objective_id: String) {
+        if !self.objective_ids.contains(&objective_id) {
+            self.objective_ids.push(objective_id.clone());
+            
+            // If this is the first objective and objective_id is not set, set it for compatibility
+            if self.objective_id.is_none() {
+                self.objective_id = Some(objective_id);
+            }
+        }
+    }
+    
+    /// Remove an objective ID from this action
+    pub fn remove_objective_id(&mut self, objective_id: &str) {
+        self.objective_ids.retain(|id| id != objective_id);
+        
+        // Also clear the legacy field if it matches
+        if let Some(ref single_id) = self.objective_id {
+            if single_id == objective_id {
+                self.objective_id = None;
+            }
         }
     }
 }
@@ -652,6 +708,8 @@ pub struct Objective {
     pub start: NaiveDate,                        // Start date
     pub end: Option<NaiveDate>,                  // End date (optional for open-ended)
     pub status: ObjectiveStatus,                 // Current status
+    #[serde(default)]
+    pub indicators: Vec<String>,                 // Has MANY indicators (UUIDs)
     pub created: chrono::DateTime<chrono::Utc>,  // Creation timestamp
     pub modified: chrono::DateTime<chrono::Utc>, // Last modification timestamp
     pub parent_id: Option<String>,               // For hierarchical objectives
@@ -669,6 +727,7 @@ impl Objective {
             start: Local::now().date_naive(),
             end: None,
             status: ObjectiveStatus::Active,
+            indicators: Vec::new(),
             created: now,
             modified: now,
             parent_id: None,
@@ -768,6 +827,58 @@ impl Default for IndicatorsData {
         IndicatorsData {
             version: 1,
             indicators: Vec::new(),
+        }
+    }
+}
+
+/// New Indicator type for UI enhancement (as per plan)
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum IndicatorType {
+    Counter,     // Incremental counting (businesses reviewed)
+    Duration,    // Time-based (hours of research)
+    Percentage,  // 0-100% (completion percentage)
+    Boolean,     // Complete/Incomplete (template ready)
+}
+
+/// Entry in indicator history tracking
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct IndicatorEntry {
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub value: f64,
+    pub note: Option<String>,
+}
+
+/// Enhanced indicator struct for expandable UI
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Indicator {
+    pub id: String,                        // UUID as string
+    pub name: String,
+    pub indicator_type: IndicatorType,
+    pub current_value: f64,
+    pub target_value: f64,
+    pub unit: String,                      // "count", "hours", "percentage", "boolean"
+    #[serde(default)]
+    pub history: Vec<IndicatorEntry>,      // Track changes over time
+}
+
+impl Indicator {
+    /// Create a new indicator
+    pub fn new(name: String, indicator_type: IndicatorType, target_value: f64) -> Self {
+        let unit = match indicator_type {
+            IndicatorType::Counter => "count",
+            IndicatorType::Duration => "hours",
+            IndicatorType::Percentage => "percentage",
+            IndicatorType::Boolean => "boolean",
+        }.to_string();
+
+        Indicator {
+            id: uuid::Uuid::new_v4().to_string(),
+            name,
+            indicator_type,
+            current_value: 0.0,
+            target_value,
+            unit,
+            history: Vec::new(),
         }
     }
 }
@@ -1189,9 +1300,10 @@ mod tests {
     #[test]
     fn test_memory_constraints() {
         // Verify that our structures are reasonably sized
-        assert!(mem::size_of::<Action>() < 100); // Should be small
-        assert!(mem::size_of::<Outcome>() < 500); // Should be reasonable
-        assert!(mem::size_of::<DailyGoals>() < 2000); // Should be moderate
+        // Action struct has grown due to new fields (objective_id, completed_at, timestamps, etc.)
+        assert!(mem::size_of::<Action>() < 200); // Increased due to new fields
+        assert!(mem::size_of::<Outcome>() < 800); // Increased due to Vec of Actions
+        assert!(mem::size_of::<DailyGoals>() < 3000); // Should be moderate
 
         // Verify that OutcomeType is a simple enum
         assert_eq!(mem::size_of::<OutcomeType>(), 1); // Should be 1 byte
