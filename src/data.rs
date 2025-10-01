@@ -85,20 +85,22 @@ pub fn parse_markdown(content: &str) -> Result<DailyGoals> {
 
                     // Create the action
                     let mut action = Action::from_markdown(text, completed);
-                    
+
                     // Check if next lines have objective metadata
                     let mut check_line = line_num + 1;
                     while check_line < lines.len() {
                         let next_line = lines[check_line].trim();
-                        
-                        if next_line.starts_with("objective:") || next_line.starts_with("objectives:") {
+
+                        if next_line.starts_with("objective:")
+                            || next_line.starts_with("objectives:")
+                        {
                             // Extract objective reference(s)
                             let obj_prefix = if next_line.starts_with("objectives:") {
                                 "objectives:"
                             } else {
                                 "objective:"
                             };
-                            
+
                             if let Some(obj_refs) = next_line.strip_prefix(obj_prefix) {
                                 // Split by comma for multiple objectives
                                 for obj_ref in obj_refs.split(',') {
@@ -338,7 +340,7 @@ fn generate_outcome_section(content: &mut String, outcome: &Outcome) {
     for action in &outcome.actions {
         let checkbox = if action.completed { "[x]" } else { "[ ]" };
         content.push_str(&format!("- {} {}\n", checkbox, action.text));
-        
+
         // Add objective metadata if present
         let all_objectives = action.get_all_objective_ids();
         if !all_objectives.is_empty() {

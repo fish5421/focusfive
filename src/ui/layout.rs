@@ -12,18 +12,18 @@ pub fn create_layout(area: Rect) -> AppLayout {
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),   // Header
-            Constraint::Min(10),     // Content
-            Constraint::Length(2),   // Footer
+            Constraint::Length(3), // Header
+            Constraint::Min(10),   // Content
+            Constraint::Length(2), // Footer
         ])
         .split(area);
 
     let content_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(25),  // Outcomes
-            Constraint::Percentage(45),  // Actions
-            Constraint::Percentage(30),  // Stats
+            Constraint::Percentage(25), // Outcomes
+            Constraint::Percentage(45), // Actions
+            Constraint::Percentage(30), // Stats
         ])
         .split(main_chunks[1]);
 

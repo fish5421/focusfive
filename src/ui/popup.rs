@@ -1,12 +1,12 @@
-use ratatui::{
-    widgets::{Clear, Block, Borders, Paragraph},
-    layout::{Constraint, Direction, Layout, Alignment, Rect},
-    style::Style,
-    Frame,
-    text::{Line, Span},
-};
-use crossterm::event::KeyCode;
 use crate::ui::theme::FocusFiveTheme;
+use crossterm::event::KeyCode;
+use ratatui::{
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::Style,
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, Paragraph},
+    Frame,
+};
 
 #[derive(PartialEq)]
 pub enum EditorResult {
@@ -20,21 +20,31 @@ pub struct TextEditor {
     pub cursor_position: usize,
     pub max_length: usize,
     pub is_active: bool,
+    pub title: String,
 }
 
 impl TextEditor {
-    pub fn new(initial_text: &str) -> Self {
+    pub fn new(default_title: &str) -> Self {
         Self {
-            text: initial_text.to_string(),
-            cursor_position: initial_text.len(),
+            text: String::new(),
+            cursor_position: 0,
             max_length: 500,
             is_active: false,
+            title: default_title.to_string(),
         }
     }
 
     pub fn activate(&mut self, text: &str) {
+        let current_title = self.title.clone();
+        let current_max = self.max_length;
+        self.activate_with(&current_title, text, current_max);
+    }
+
+    pub fn activate_with(&mut self, title: &str, text: &str, max_length: usize) {
+        self.title = title.to_string();
         self.text = text.to_string();
         self.cursor_position = text.len();
+        self.max_length = max_length;
         self.is_active = true;
     }
 
@@ -123,10 +133,10 @@ impl TextEditor {
         let popup = Paragraph::new(content)
             .block(
                 Block::default()
-                    .title(" Edit Action ")
+                    .title(format!(" {} ", self.title))
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(theme.header))
-                    .style(Style::default().bg(theme.panel_bg))
+                    .style(Style::default().bg(theme.panel_bg)),
             )
             .style(Style::default().fg(theme.text_primary))
             .alignment(Alignment::Left)

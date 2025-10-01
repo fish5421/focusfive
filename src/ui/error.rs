@@ -1,12 +1,12 @@
+use crate::ui::theme::FocusFiveTheme;
 use ratatui::{
-    widgets::{Block, Borders, Paragraph, Clear},
-    style::{Style, Modifier},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Modifier, Style},
     text::{Line, Span},
-    layout::{Rect, Constraint, Direction, Layout, Alignment},
+    widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 use std::time::Instant;
-use crate::ui::theme::FocusFiveTheme;
 
 pub struct ErrorDisplay {
     message: Option<String>,
@@ -93,7 +93,7 @@ impl ErrorDisplay {
                         .title(title)
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(color).add_modifier(Modifier::BOLD))
-                        .style(Style::default().bg(theme.panel_bg))
+                        .style(Style::default().bg(theme.panel_bg)),
                 )
                 .alignment(Alignment::Center)
                 .wrap(ratatui::widgets::Wrap { trim: true });
@@ -121,7 +121,10 @@ impl ErrorDisplay {
             };
 
             let error_line = Line::from(vec![
-                Span::styled(prefix, Style::default().fg(color).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    prefix,
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(msg.clone(), Style::default().fg(color)),
             ]);
 

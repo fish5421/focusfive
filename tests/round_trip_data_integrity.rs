@@ -32,6 +32,7 @@ mod round_trip_tests {
         let temp_dir = TempDir::new()?;
         let config = Config {
             goals_dir: temp_dir.path().join("goals").to_string_lossy().to_string(),
+            data_root: temp_dir.path().to_string_lossy().to_string(),
         };
 
         // Create initial goals with basic data
@@ -41,46 +42,23 @@ mod round_trip_tests {
 
         // Populate with test data
         original_goals.work.goal = Some("Complete project".to_string());
-        original_goals.work.actions[0] = Action {
-            text: "Write tests".to_string(),
-            completed: true,
-        };
-        original_goals.work.actions[1] = Action {
-            text: "Review code".to_string(),
-            completed: false,
-        };
-        original_goals.work.actions[2] = Action {
-            text: "Deploy to staging".to_string(),
-            completed: true,
-        };
+        original_goals.work.actions[0] = Action::from_markdown("Write tests".to_string(), true);
+        original_goals.work.actions[1] = Action::from_markdown("Review code".to_string(), false);
+        original_goals.work.actions[2] =
+            Action::from_markdown("Deploy to staging".to_string(), true);
 
         original_goals.health.goal = Some("Daily exercise".to_string());
-        original_goals.health.actions[0] = Action {
-            text: "Morning run".to_string(),
-            completed: true,
-        };
-        original_goals.health.actions[1] = Action {
-            text: "Strength training".to_string(),
-            completed: false,
-        };
-        original_goals.health.actions[2] = Action {
-            text: "Evening stretching".to_string(),
-            completed: false,
-        };
+        original_goals.health.actions[0] = Action::from_markdown("Morning run".to_string(), true);
+        original_goals.health.actions[1] =
+            Action::from_markdown("Strength training".to_string(), false);
+        original_goals.health.actions[2] =
+            Action::from_markdown("Evening stretching".to_string(), false);
 
         original_goals.family.goal = Some("Quality time".to_string());
-        original_goals.family.actions[0] = Action {
-            text: "Call parents".to_string(),
-            completed: false,
-        };
-        original_goals.family.actions[1] = Action {
-            text: "Family dinner".to_string(),
-            completed: true,
-        };
-        original_goals.family.actions[2] = Action {
-            text: "Bedtime stories".to_string(),
-            completed: true,
-        };
+        original_goals.family.actions[0] = Action::from_markdown("Call parents".to_string(), false);
+        original_goals.family.actions[1] = Action::from_markdown("Family dinner".to_string(), true);
+        original_goals.family.actions[2] =
+            Action::from_markdown("Bedtime stories".to_string(), true);
 
         // Round trip 1: Save and load
         write_goals_file(&original_goals, &config)?;
@@ -124,6 +102,7 @@ mod round_trip_tests {
         let temp_dir = TempDir::new()?;
         let config = Config {
             goals_dir: temp_dir.path().join("goals").to_string_lossy().to_string(),
+            data_root: temp_dir.path().to_string_lossy().to_string(),
         };
 
         let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
@@ -131,46 +110,28 @@ mod round_trip_tests {
 
         // Test various Unicode content
         goals.work.goal = Some("完成项目 🎯".to_string());
-        goals.work.actions[0] = Action {
-            text: "编写测试 ✅ with émojis 🚀".to_string(),
-            completed: true,
-        };
-        goals.work.actions[1] = Action {
-            text: "Español: Revisar código con acentos y ñ".to_string(),
-            completed: false,
-        };
-        goals.work.actions[2] = Action {
-            text: "Русский: Проверить кодировку UTF-8".to_string(),
-            completed: true,
-        };
+        goals.work.actions[0] =
+            Action::from_markdown("编写测试 ✅ with émojis 🚀".to_string(), true);
+        goals.work.actions[1] =
+            Action::from_markdown("Español: Revisar código con acentos y ñ".to_string(), false);
+        goals.work.actions[2] =
+            Action::from_markdown("Русский: Проверить кодировку UTF-8".to_string(), true);
 
         goals.health.goal = Some("健康目标 💪".to_string());
-        goals.health.actions[0] = Action {
-            text: "晨跑 🏃‍♂️ 5公里".to_string(),
-            completed: true,
-        };
-        goals.health.actions[1] = Action {
-            text: "Café ☕ and méditation 🧘".to_string(),
-            completed: false,
-        };
-        goals.health.actions[2] = Action {
-            text: "Ωμέγα-3 supplements & vitamins".to_string(),
-            completed: false,
-        };
+        goals.health.actions[0] = Action::from_markdown("晨跑 🏃‍♂️ 5公里".to_string(), true);
+        goals.health.actions[1] =
+            Action::from_markdown("Café ☕ and méditation 🧘".to_string(), false);
+        goals.health.actions[2] =
+            Action::from_markdown("Ωμέγα-3 supplements & vitamins".to_string(), false);
 
         goals.family.goal = Some("Familie Zeit 👨‍👩‍👧‍👦".to_string());
-        goals.family.actions[0] = Action {
-            text: "Appeler les parents 📞 à 19h".to_string(),
-            completed: false,
-        };
-        goals.family.actions[1] = Action {
-            text: "مشاهدة فيلم عائلي".to_string(),
-            completed: true,
-        };
-        goals.family.actions[2] = Action {
-            text: "Read bedtime story: \"The 🐻 and the 🍯\"".to_string(),
-            completed: true,
-        };
+        goals.family.actions[0] =
+            Action::from_markdown("Appeler les parents 📞 à 19h".to_string(), false);
+        goals.family.actions[1] = Action::from_markdown("مشاهدة فيلم عائلي".to_string(), true);
+        goals.family.actions[2] = Action::from_markdown(
+            "Read bedtime story: \"The 🐻 and the 🍯\"".to_string(),
+            true,
+        );
 
         // Multiple round-trips to ensure Unicode stability
         for round in 1..=5 {
@@ -204,46 +165,32 @@ mod round_trip_tests {
 
         // Test edge case characters that might interfere with markdown parsing
         goals.work.goal = Some("Goal with [brackets] and (parentheses) and #hash".to_string());
-        goals.work.actions[0] = Action {
-            text: "Task with - [x] false checkbox text".to_string(),
-            completed: true,
-        };
-        goals.work.actions[1] = Action {
-            text: "Task with ## header-like text".to_string(),
-            completed: false,
-        };
-        goals.work.actions[2] = Action {
-            text: "Task with\nembedded newlines\nand\ttabs".to_string(),
-            completed: true,
-        };
+        goals.work.actions[0] =
+            Action::from_markdown("Task with - [x] false checkbox text".to_string(), true);
+        goals.work.actions[1] =
+            Action::from_markdown("Task with ## header-like text".to_string(), false);
+        goals.work.actions[2] =
+            Action::from_markdown("Task with\nembedded newlines\nand\ttabs".to_string(), true);
 
         goals.health.goal = Some("Goal: with colons and & ampersands".to_string());
-        goals.health.actions[0] = Action {
-            text: "Action with * asterisks * and _ underscores _".to_string(),
-            completed: true,
-        };
-        goals.health.actions[1] = Action {
-            text: "Action with `backticks` and |pipes|".to_string(),
-            completed: false,
-        };
-        goals.health.actions[2] = Action {
-            text: "Action with quotes: \"double\" and 'single'".to_string(),
-            completed: false,
-        };
+        goals.health.actions[0] = Action::from_markdown(
+            "Action with * asterisks * and _ underscores _".to_string(),
+            true,
+        );
+        goals.health.actions[1] =
+            Action::from_markdown("Action with `backticks` and |pipes|".to_string(), false);
+        goals.health.actions[2] = Action::from_markdown(
+            "Action with quotes: \"double\" and 'single'".to_string(),
+            false,
+        );
 
         goals.family.goal = Some("Goal with < > angle brackets".to_string());
-        goals.family.actions[0] = Action {
-            text: "HTML-like <tag>content</tag> in action".to_string(),
-            completed: false,
-        };
-        goals.family.actions[1] = Action {
-            text: "Math symbols: α + β = γ, ∑, ∫, ∞".to_string(),
-            completed: true,
-        };
-        goals.family.actions[2] = Action {
-            text: "Symbols: © ® ™ ¶ § † ‡ • ◦ ‣".to_string(),
-            completed: true,
-        };
+        goals.family.actions[0] =
+            Action::from_markdown("HTML-like <tag>content</tag> in action".to_string(), false);
+        goals.family.actions[1] =
+            Action::from_markdown("Math symbols: α + β = γ, ∑, ∫, ∞".to_string(), true);
+        goals.family.actions[2] =
+            Action::from_markdown("Symbols: © ® ™ ¶ § † ‡ • ◦ ‣".to_string(), true);
 
         // Multiple markdown round-trips
         let original_markdown = generate_markdown(&goals);
@@ -279,6 +226,7 @@ mod round_trip_tests {
         let temp_dir = TempDir::new()?;
         let config = Config {
             goals_dir: temp_dir.path().join("goals").to_string_lossy().to_string(),
+            data_root: temp_dir.path().to_string_lossy().to_string(),
         };
 
         let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
@@ -311,18 +259,15 @@ mod round_trip_tests {
         // Test single character content
         let mut single_char_goals = DailyGoals::new(date);
         single_char_goals.work.goal = Some("X".to_string());
-        single_char_goals.work.actions[0] = Action {
-            text: "A".to_string(),
-            completed: true,
-        };
-        single_char_goals.work.actions[1] = Action {
-            text: "🎯".to_string(), // Single emoji
-            completed: false,
-        };
-        single_char_goals.work.actions[2] = Action {
-            text: "中".to_string(), // Single CJK character
-            completed: true,
-        };
+        single_char_goals.work.actions[0] = Action::from_markdown("A".to_string(), true);
+        single_char_goals.work.actions[1] = Action::from_markdown(
+            "🎯".to_string(), // Single emoji
+            false,
+        );
+        single_char_goals.work.actions[2] = Action::from_markdown(
+            "中".to_string(), // Single CJK character
+            true,
+        );
 
         write_goals_file(&single_char_goals, &config)?;
         let loaded_single_char = load_or_create_goals(date, &config)?;
@@ -336,6 +281,7 @@ mod round_trip_tests {
         let temp_dir = TempDir::new()?;
         let config = Config {
             goals_dir: temp_dir.path().join("goals").to_string_lossy().to_string(),
+            data_root: temp_dir.path().to_string_lossy().to_string(),
         };
 
         let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
@@ -390,6 +336,7 @@ mod round_trip_tests {
         let temp_dir = TempDir::new()?;
         let config = Config {
             goals_dir: temp_dir.path().join("goals").to_string_lossy().to_string(),
+            data_root: temp_dir.path().to_string_lossy().to_string(),
         };
 
         // Test edge dates
@@ -465,6 +412,7 @@ mod round_trip_tests {
         let temp_dir = TempDir::new()?;
         let config = Config {
             goals_dir: temp_dir.path().join("goals").to_string_lossy().to_string(),
+            data_root: temp_dir.path().to_string_lossy().to_string(),
         };
 
         let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
@@ -530,32 +478,17 @@ mod round_trip_tests {
 
         // Test various whitespace scenarios
         goals.work.goal = Some("  Goal with leading and trailing spaces  ".to_string());
-        goals.work.actions[0] = Action {
-            text: "Action with  multiple  internal  spaces".to_string(),
-            completed: true,
-        };
-        goals.work.actions[1] = Action {
-            text: "\tAction with tabs\tand spaces\t".to_string(),
-            completed: false,
-        };
-        goals.work.actions[2] = Action {
-            text: "Action\nwith\nline\nbreaks".to_string(),
-            completed: true,
-        };
+        goals.work.actions[0] =
+            Action::from_markdown("Action with  multiple  internal  spaces".to_string(), true);
+        goals.work.actions[1] =
+            Action::from_markdown("\tAction with tabs\tand spaces\t".to_string(), false);
+        goals.work.actions[2] =
+            Action::from_markdown("Action\nwith\nline\nbreaks".to_string(), true);
 
         goals.health.goal = Some("Goal\r\nwith\r\nCRLF".to_string());
-        goals.health.actions[0] = Action {
-            text: "Action with trailing\n".to_string(),
-            completed: true,
-        };
-        goals.health.actions[1] = Action {
-            text: "\nAction with leading".to_string(),
-            completed: false,
-        };
-        goals.health.actions[2] = Action {
-            text: "Normal action".to_string(),
-            completed: false,
-        };
+        goals.health.actions[0] = Action::from_markdown("Action with trailing\n".to_string(), true);
+        goals.health.actions[1] = Action::from_markdown("\nAction with leading".to_string(), false);
+        goals.health.actions[2] = Action::from_markdown("Normal action".to_string(), false);
 
         // Test markdown round-trips preserve meaningful whitespace
         let original_markdown = generate_markdown(&goals);
@@ -608,10 +541,7 @@ mod round_trip_tests {
         for (case_name, content) in test_cases {
             let mut goals = DailyGoals::new(date);
             goals.work.goal = Some(format!("Goal with {} line endings", case_name));
-            goals.work.actions[0] = Action {
-                text: content.to_string(),
-                completed: true,
-            };
+            goals.work.actions[0] = Action::from_markdown(content.to_string(), true);
 
             // Markdown round-trip should handle line endings gracefully
             let markdown = generate_markdown(&goals);
@@ -645,6 +575,7 @@ mod round_trip_tests {
         let temp_dir = TempDir::new()?;
         let config = Config {
             goals_dir: temp_dir.path().join("goals").to_string_lossy().to_string(),
+            data_root: temp_dir.path().to_string_lossy().to_string(),
         };
 
         let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
@@ -652,10 +583,7 @@ mod round_trip_tests {
 
         // Initial setup
         goals.work.goal = Some("Evolving goal".to_string());
-        goals.work.actions[0] = Action {
-            text: "Dynamic action".to_string(),
-            completed: false,
-        };
+        goals.work.actions[0] = Action::from_markdown("Dynamic action".to_string(), false);
 
         // Simulate rapid modification cycles
         for cycle in 1..=100 {
@@ -695,6 +623,7 @@ mod round_trip_tests {
         let temp_dir = TempDir::new()?;
         let config = Config {
             goals_dir: temp_dir.path().join("goals").to_string_lossy().to_string(),
+            data_root: temp_dir.path().to_string_lossy().to_string(),
         };
 
         let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
@@ -854,6 +783,7 @@ mod round_trip_tests {
         let temp_dir = TempDir::new()?;
         let config = Config {
             goals_dir: temp_dir.path().join("goals").to_string_lossy().to_string(),
+            data_root: temp_dir.path().to_string_lossy().to_string(),
         };
 
         let date = NaiveDate::from_ymd_opt(2025, 1, 15).unwrap();
@@ -862,13 +792,13 @@ mod round_trip_tests {
         // Set up realistic content
         goals.work.goal = Some("Performance test goal".to_string());
         for i in 0..3 {
-            goals.work.actions[i] = Action {
-                text: format!(
+            goals.work.actions[i] = Action::from_markdown(
+                format!(
                     "Performance test action {} with moderate length content",
                     i + 1
                 ),
-                completed: i % 2 == 0,
-            };
+                i % 2 == 0,
+            );
         }
 
         let start_time = Instant::now();
@@ -914,6 +844,7 @@ mod round_trip_tests {
         let temp_dir = TempDir::new()?;
         let config = Config {
             goals_dir: temp_dir.path().join("goals").to_string_lossy().to_string(),
+            data_root: temp_dir.path().to_string_lossy().to_string(),
         };
 
         // Test data representing real-world usage
@@ -971,11 +902,11 @@ mod round_trip_tests {
                     ),
                     ("", vec!["", "Single char: X", "Symbols: © ® ™"]),
                     (
-                        "Very long goal: ".to_owned() + &"Long content ".repeat(50),
+                        "Very long goal with lots of content",
                         vec![
-                            "Short".to_string(),
-                            "Medium length task with details".to_string(),
-                            "Very long task: ".to_string() + &"Detailed description ".repeat(30),
+                            "Short",
+                            "Medium length task with details",
+                            "Very long task with detailed description",
                         ],
                     ),
                 ],
@@ -991,21 +922,21 @@ mod round_trip_tests {
             goals.day_number = Some(day as u32);
 
             // Set up goals data
-            let outcomes = [&mut goals.work, &mut goals.health, &mut goals.family];
+            let mut outcomes = [&mut goals.work, &mut goals.health, &mut goals.family];
             for (outcome, (goal_text, actions_data)) in
                 outcomes.iter_mut().zip(outcomes_data.iter())
             {
                 outcome.goal = if goal_text.is_empty() {
                     None
                 } else {
-                    Some(goal_text.clone())
+                    Some(goal_text.to_string())
                 };
                 for (i, action_text) in actions_data.iter().enumerate() {
                     if i < 3 {
-                        outcome.actions[i] = Action {
-                            text: action_text.clone(),
-                            completed: (day + i) % 3 == 0,
-                        };
+                        outcome.actions[i] = Action::from_markdown(
+                            action_text.to_string(),
+                            (day as usize + i) % 3 == 0,
+                        );
                     }
                 }
             }
@@ -1103,25 +1034,17 @@ mod test_utils {
             }
             "unicode" => {
                 goals.work.goal = Some("目标 🎯".to_string());
-                goals.work.actions[0] = Action {
-                    text: "任务 ✅".to_string(),
-                    completed: true,
-                };
+                goals.work.actions[0] = Action::from_markdown("任务 ✅".to_string(), true);
             }
             "special_chars" => {
                 goals.work.goal = Some("Goal with [brackets] and (parentheses)".to_string());
-                goals.work.actions[0] = Action {
-                    text: "Task with - [x] and ## symbols".to_string(),
-                    completed: false,
-                };
+                goals.work.actions[0] =
+                    Action::from_markdown("Task with - [x] and ## symbols".to_string(), false);
             }
             "long_content" => {
                 let long_text = "Long content ".repeat(100);
                 goals.work.goal = Some(long_text.clone());
-                goals.work.actions[0] = Action {
-                    text: long_text,
-                    completed: true,
-                };
+                goals.work.actions[0] = Action::from_markdown(long_text, true);
             }
             _ => {
                 panic!("Unknown test pattern: {}", pattern);

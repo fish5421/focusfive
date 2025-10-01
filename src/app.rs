@@ -260,10 +260,9 @@ impl App {
                 domain,
                 selection_index,
             } => self.handle_objective_selection_mode(key, domain, selection_index),
-            InputMode::ObjectiveCreation {
-                domain,
-                buffer,
-            } => self.handle_objective_creation_mode(key, domain, buffer),
+            InputMode::ObjectiveCreation { domain, buffer } => {
+                self.handle_objective_creation_mode(key, domain, buffer)
+            }
             InputMode::Reflecting {
                 outcome_type,
                 buffer,
@@ -344,74 +343,28 @@ impl App {
             KeyCode::Char('?') => {
                 self.show_help = true;
             }
-            KeyCode::Tab => {
-                // Tab always switches between panes
-                // Exit indicator selection mode if active
-                if self.ui_state.selected_indicator_index.is_some() {
-                    self.ui_state.selected_indicator_index = None;
-                }
-                
-                // Switch panes
-                self.active_pane = match self.active_pane {
-                    Pane::Outcomes => Pane::Actions,
-                    Pane::Actions => Pane::Outcomes,
-                };
-            }
-            KeyCode::Char('j') | KeyCode::Down => match self.active_pane {
+            KeyCode::Char('j') => match self.active_pane {
                 Pane::Outcomes => {
                     if self.outcome_index < 2 {
                         self.outcome_index += 1;
                     }
                 }
                 Pane::Actions => {
-                    // Check if we're in indicator selection mode
-                    if let Some(ref mut indicator_idx) = self.ui_state.selected_indicator_index {
-                        // Navigate within indicators
-                        let outcome = &self.goals.outcomes()[self.outcome_index];
-                        if self.action_index < outcome.actions.len() {
-                            let action = &outcome.actions[self.action_index];
-                            let objective_ids = action.get_all_objective_ids();
-                            
-                            // Count total indicators
-                            let mut total_indicators = 0;
-                            for obj_id in &objective_ids {
-                                if let Some(objective) = self.objectives.objectives.iter()
-                                    .find(|obj| obj.id == *obj_id) {
-                                    total_indicators += objective.indicators.len();
-                                }
-                            }
-                            
-                            if *indicator_idx < total_indicators.saturating_sub(1) {
-                                *indicator_idx += 1;
-                            }
-                        }
-                    } else {
-                        // Normal action navigation
-                        let current_outcome = &self.goals.outcomes()[self.outcome_index];
-                        if self.action_index < current_outcome.actions.len().saturating_sub(1) {
-                            self.action_index += 1;
-                        }
+                    let current_outcome = &self.goals.outcomes()[self.outcome_index];
+                    if self.action_index < current_outcome.actions.len().saturating_sub(1) {
+                        self.action_index += 1;
                     }
                 }
             },
-            KeyCode::Char('k') | KeyCode::Up => match self.active_pane {
+            KeyCode::Char('k') => match self.active_pane {
                 Pane::Outcomes => {
                     if self.outcome_index > 0 {
                         self.outcome_index -= 1;
                     }
                 }
                 Pane::Actions => {
-                    // Check if we're in indicator selection mode
-                    if let Some(ref mut indicator_idx) = self.ui_state.selected_indicator_index {
-                        // Navigate within indicators
-                        if *indicator_idx > 0 {
-                            *indicator_idx -= 1;
-                        }
-                    } else {
-                        // Normal action navigation
-                        if self.action_index > 0 {
-                            self.action_index -= 1;
-                        }
+                    if self.action_index > 0 {
+                        self.action_index -= 1;
                     }
                 }
             },
@@ -450,7 +403,7 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                // Toggle expansion of the current action or navigate into indicators
+                // Toggle expansion of the current action
                 if self.active_pane == Pane::Actions {
                     let outcome = match self.outcome_index {
                         0 => &self.goals.work,
@@ -461,14 +414,8 @@ impl App {
                     if self.action_index < outcome.actions.len() {
                         let action = &outcome.actions[self.action_index];
                         let action_id = action.id.clone();
-                        
-                        // If in indicator selection mode, exit it
-                        if self.ui_state.selected_indicator_index.is_some() {
-                            self.ui_state.selected_indicator_index = None;
-                        } else {
-                            // Toggle expansion of the action
-                            self.ui_state.toggle_expansion(action_id);
-                        }
+                        // Toggle expansion of the action
+                        self.ui_state.toggle_expansion(action_id);
                     }
                 }
             }
@@ -668,118 +615,6 @@ impl App {
             KeyCode::Char('n') => {
                 // Switch to evening (night) phase
                 self.ritual_phase = RitualPhase::Evening;
-            }
-            KeyCode::Char('i') => {
-                // Update selected indicator (when in indicator mode)
-                if self.active_pane == Pane::Actions {
-                    if let Some(indicator_index) = self.ui_state.selected_indicator_index {
-                        // Get the current expanded action
-                        let outcome = match self.outcome_index {
-                            0 => &self.goals.work,
-                            1 => &self.goals.health,
-                            2 => &self.goals.family,
-                            _ => return Ok(()),
-                        };
-                        
-                        if self.action_index < outcome.actions.len() {
-                            let action = &outcome.actions[self.action_index];
-                            
-                            // Get objectives linked to this action
-                            let objective_ids = action.get_all_objective_ids();
-                            
-                            // Find indicators for these objectives
-                            let mut current_idx = 0;
-                            for objective_id in objective_ids {
-                                if let Some(objective) = self.objectives.objectives.iter()
-                                    .find(|obj| obj.id == objective_id) {
-                                    // For each indicator ID in the objective
-                                    for indicator_id in &objective.indicators {
-                                        // Check if this indicator actually exists in our indicators data
-                                        if let Some(indicator) = self.indicators.indicators.iter()
-                                            .find(|ind| ind.id == *indicator_id) {
-                                            if current_idx == indicator_index {
-                                                // Found the indicator to update
-                                                self.enter_indicator_update(indicator.id.clone());
-                                                return Ok(());
-                                            }
-                                            current_idx += 1;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            KeyCode::Esc => {
-                // Exit indicator selection mode if active
-                if self.ui_state.selected_indicator_index.is_some() {
-                    self.ui_state.selected_indicator_index = None;
-                }
-            }
-            KeyCode::Char('u') | KeyCode::Char('U') => {
-                // Enter indicator selection mode directly
-                if self.active_pane == Pane::Actions {
-                    let outcome = match self.outcome_index {
-                        0 => &self.goals.work,
-                        1 => &self.goals.health,
-                        2 => &self.goals.family,
-                        _ => return Ok(()),
-                    };
-                    
-                    if self.action_index < outcome.actions.len() {
-                        let action = &outcome.actions[self.action_index];
-                        
-                        // Toggle indicator selection mode
-                        if self.ui_state.selected_indicator_index.is_some() {
-                            // Exit indicator selection mode
-                            self.ui_state.selected_indicator_index = None;
-                        } else if self.ui_state.is_expanded(&action.id) {
-                            // Check if action has indicators
-                            let objective_ids = action.get_all_objective_ids();
-                            let mut has_indicators = false;
-                            
-                            for obj_id in &objective_ids {
-                                if let Some(objective) = self.objectives.objectives.iter()
-                                    .find(|obj| obj.id == *obj_id) {
-                                    if !objective.indicators.is_empty() {
-                                        has_indicators = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            
-                            if has_indicators {
-                                // Enter indicator selection mode
-                                self.ui_state.selected_indicator_index = Some(0);
-                                // No info message - visual feedback will show mode
-                            } else {
-                                // Action has no indicators to update
-                            }
-                        } else {
-                            // Need to expand action first
-                            self.ui_state.toggle_expansion(action.id.clone());
-                            // Then check for indicators
-                            let objective_ids = action.get_all_objective_ids();
-                            let mut has_indicators = false;
-                            
-                            for obj_id in &objective_ids {
-                                if let Some(objective) = self.objectives.objectives.iter()
-                                    .find(|obj| obj.id == *obj_id) {
-                                    if !objective.indicators.is_empty() {
-                                        has_indicators = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            
-                            if has_indicators {
-                                // Enter indicator selection mode
-                                self.ui_state.selected_indicator_index = Some(0);
-                            }
-                        }
-                    }
-                }
             }
             _ => {}
         }
@@ -1150,7 +985,7 @@ impl App {
 
         Ok(())
     }
-    
+
     /// Toggle an objective for the current action (add if not linked, remove if linked)
     pub fn toggle_objective_for_current_action(&mut self, objective_id: &str) -> Result<()> {
         // Get the current action
@@ -1160,10 +995,10 @@ impl App {
             2 => &mut self.goals.family,
             _ => return Ok(()),
         };
-        
+
         if let Some(action) = current_outcome.actions.get_mut(self.action_index) {
             let all_objectives = action.get_all_objective_ids();
-            
+
             if all_objectives.contains(&objective_id.to_string()) {
                 // Remove the objective
                 action.remove_objective_id(objective_id);
@@ -1171,13 +1006,13 @@ impl App {
                 // Add the objective
                 action.add_objective_id(objective_id.to_string());
             }
-            
+
             self.needs_save = true;
         }
-        
+
         Ok(())
     }
-    
+
     /// Clear all objectives for the current action
     pub fn clear_all_objectives_for_current_action(&mut self) -> Result<()> {
         let current_outcome = match self.outcome_index {
@@ -1186,14 +1021,14 @@ impl App {
             2 => &mut self.goals.family,
             _ => return Ok(()),
         };
-        
+
         if let Some(action) = current_outcome.actions.get_mut(self.action_index) {
             // Clear both the single and multiple objective fields
             action.objective_id = None;
             action.objective_ids.clear();
             self.needs_save = true;
         }
-        
+
         Ok(())
     }
 
@@ -1235,7 +1070,9 @@ impl App {
                         let current_outcome = self.get_current_outcome_mut();
 
                         // First, ensure we have enough action slots for the template
-                        while current_outcome.actions.len() < actions.len() && current_outcome.actions.len() < 5 {
+                        while current_outcome.actions.len() < actions.len()
+                            && current_outcome.actions.len() < 5
+                        {
                             if let Err(e) = current_outcome.add_action() {
                                 eprintln!("Warning: Could not add action slot: {}", e);
                                 break;
@@ -1310,10 +1147,10 @@ impl App {
                     // Toggle the selected objective
                     let selected_objective = domain_objectives[selection_index];
                     let objective_id = selected_objective.id.clone();
-                    
+
                     // Toggle the objective
                     self.toggle_objective_for_current_action(&objective_id)?;
-                    
+
                     // Stay in selection mode to allow multiple selections
                     // No info message - the UI will show checkmarks for visual feedback
                     self.input_mode = InputMode::ObjectiveSelection {
@@ -1334,7 +1171,7 @@ impl App {
                     let selected_objective = domain_objectives[selection_index];
                     let objective_id = selected_objective.id.clone();
                     let objective_title = selected_objective.title.clone();
-                    
+
                     // Get indicators for this objective
                     let objective_indicators: Vec<crate::models::IndicatorDef> = self
                         .indicators
@@ -1343,7 +1180,7 @@ impl App {
                         .filter(|ind| ind.objective_id.as_ref() == Some(&objective_id))
                         .cloned()
                         .collect();
-                    
+
                     self.input_mode = InputMode::IndicatorManagement {
                         objective_id,
                         objective_title,
@@ -1352,7 +1189,9 @@ impl App {
                         editing_field: None,
                     };
                 } else {
-                    self.set_error("Create an objective first before managing indicators".to_string());
+                    self.set_error(
+                        "Create an objective first before managing indicators".to_string(),
+                    );
                 }
             }
             KeyCode::Char('c') => {
@@ -1383,13 +1222,14 @@ impl App {
             KeyCode::Enter => {
                 if !buffer.trim().is_empty() {
                     // Create new objective
-                    let new_objective = crate::models::Objective::new(domain, buffer.trim().to_string());
+                    let new_objective =
+                        crate::models::Objective::new(domain, buffer.trim().to_string());
                     let objective_id = new_objective.id.clone();
                     let objective_title = new_objective.title.clone();
-                    
+
                     // Add to objectives list
                     self.objectives.objectives.push(new_objective);
-                    
+
                     // Save objectives to file
                     if let Err(e) = save_objectives(&self.objectives, &self.config) {
                         self.set_error(format!("Failed to save objective: {}", e));
@@ -1398,7 +1238,10 @@ impl App {
                         if let Err(e) = self.link_current_action_to_objective(Some(objective_id)) {
                             self.set_error(format!("Failed to link action to objective: {}", e));
                         } else {
-                            self.set_info(&format!("Created and linked to objective: {}", objective_title));
+                            self.set_info(&format!(
+                                "Created and linked to objective: {}",
+                                objective_title
+                            ));
                         }
                     }
                 }
@@ -1409,17 +1252,11 @@ impl App {
             }
             KeyCode::Char(c) => {
                 buffer.push(c);
-                self.input_mode = InputMode::ObjectiveCreation {
-                    domain,
-                    buffer,
-                };
+                self.input_mode = InputMode::ObjectiveCreation { domain, buffer };
             }
             KeyCode::Backspace => {
                 buffer.pop();
-                self.input_mode = InputMode::ObjectiveCreation {
-                    domain,
-                    buffer,
-                };
+                self.input_mode = InputMode::ObjectiveCreation { domain, buffer };
             }
             _ => {}
         }
@@ -1654,7 +1491,7 @@ impl App {
                                 };
                             }
                         }
-                        
+
                         // Update the main indicators list
                         let indicator = &indicators[selection_index];
                         if let Some(main_ind) = self
@@ -1670,7 +1507,7 @@ impl App {
                         }
                         self.indicators_needs_save = true;
                     }
-                    
+
                     // Exit edit mode
                     self.input_mode = InputMode::IndicatorManagement {
                         objective_id,
@@ -1732,10 +1569,10 @@ impl App {
             }
             return Ok(());
         }
-        
+
         // Normal navigation mode
         let total_options = indicators.len() + 1; // +1 for "Create New"
-        
+
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => {
                 if selection_index < total_options.saturating_sub(1) {
@@ -1819,19 +1656,21 @@ impl App {
             KeyCode::Char('d') if selection_index < indicators.len() => {
                 // Delete indicator
                 let indicator_id = indicators[selection_index].id.clone();
-                
+
                 // Remove from main list
-                self.indicators.indicators.retain(|ind| ind.id != indicator_id);
+                self.indicators
+                    .indicators
+                    .retain(|ind| ind.id != indicator_id);
                 self.indicators_needs_save = true;
-                
+
                 // Remove from local list
                 indicators.remove(selection_index);
-                
+
                 // Adjust selection index if needed
                 if selection_index >= indicators.len() && selection_index > 0 {
                     selection_index = indicators.len() - 1;
                 }
-                
+
                 self.input_mode = InputMode::IndicatorManagement {
                     objective_id,
                     objective_title,
@@ -1839,13 +1678,13 @@ impl App {
                     selection_index,
                     editing_field: None,
                 };
-                
+
                 self.set_info("Indicator deleted");
             }
             KeyCode::Char(' ') if selection_index < indicators.len() => {
                 // Toggle active status
                 indicators[selection_index].active = !indicators[selection_index].active;
-                
+
                 // Update main list
                 let indicator = &indicators[selection_index];
                 if let Some(main_ind) = self
@@ -1858,7 +1697,7 @@ impl App {
                     main_ind.modified = chrono::Utc::now();
                 }
                 self.indicators_needs_save = true;
-                
+
                 self.input_mode = InputMode::IndicatorManagement {
                     objective_id,
                     objective_title,
@@ -1884,9 +1723,10 @@ impl App {
         // Read observations for today
         let today = chrono::Local::now().naive_local().date();
         let observations = crate::data::read_observations_range(today, today, &self.config).ok()?;
-        
+
         // Find the latest observation for this indicator
-        observations.iter()
+        observations
+            .iter()
             .filter(|obs| obs.indicator_id == indicator_id)
             .map(|obs| obs.value)
             .last()
@@ -1897,17 +1737,20 @@ impl App {
         if objective.indicators.is_empty() {
             return 0.0;
         }
-        
+
         let mut total_progress = 0.0;
         let mut valid_indicators = 0;
-        
+
         for indicator_id in &objective.indicators {
-            if let Some(indicator) = self.indicators.indicators.iter()
-                .find(|ind| ind.id == *indicator_id) {
-                
+            if let Some(indicator) = self
+                .indicators
+                .indicators
+                .iter()
+                .find(|ind| ind.id == *indicator_id)
+            {
                 // Get the latest value for this indicator
                 let current_value = self.get_latest_indicator_value(indicator_id).unwrap_or(0.0);
-                
+
                 // Calculate progress as percentage of target
                 let progress = if let Some(target) = indicator.target {
                     if target > 0.0 {
@@ -1918,12 +1761,12 @@ impl App {
                 } else {
                     0.0
                 };
-                
+
                 total_progress += progress;
                 valid_indicators += 1;
             }
         }
-        
+
         if valid_indicators > 0 {
             total_progress / valid_indicators as f64
         } else {
@@ -1935,12 +1778,14 @@ impl App {
     pub fn enter_indicator_update(&mut self, indicator_id: String) {
         self.input_mode = InputMode::UpdatingIndicator(indicator_id.clone());
         self.ui_state.update_buffer.clear();
-        
+
         // Load the latest observation value for this indicator
-        let current_value = self.get_latest_indicator_value(&indicator_id).unwrap_or(0.0);
+        let current_value = self
+            .get_latest_indicator_value(&indicator_id)
+            .unwrap_or(0.0);
         self.ui_state.update_buffer = format!("{}", current_value);
     }
-    
+
     /// Apply the indicator update from the buffer
     pub fn apply_indicator_update(&mut self) -> Result<()> {
         if let InputMode::UpdatingIndicator(id) = &self.input_mode {
@@ -1948,12 +1793,16 @@ impl App {
                 // Parse based on indicator type
                 let new_value = match indicator.unit {
                     crate::models::IndicatorUnit::Percent => {
-                        let pct = self.ui_state.update_buffer.trim_end_matches('%').parse::<f64>()?;
+                        let pct = self
+                            .ui_state
+                            .update_buffer
+                            .trim_end_matches('%')
+                            .parse::<f64>()?;
                         pct.min(100.0).max(0.0)
                     }
-                    _ => self.ui_state.update_buffer.parse::<f64>()?
+                    _ => self.ui_state.update_buffer.parse::<f64>()?,
                 };
-                
+
                 // Create a new observation
                 let observation = crate::models::Observation {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -1966,24 +1815,22 @@ impl App {
                     note: None,
                     created: chrono::Utc::now(),
                 };
-                
+
                 // Save observation to observations file
                 if let Err(e) = crate::data::append_observation(&observation, &self.config) {
                     self.set_error(format!("Failed to save observation: {}", e));
                     return Err(e);
                 }
-                
+
                 self.indicators_needs_save = true;
-                
+
                 // Update the cached indicator value in memory (so UI shows it immediately)
                 // This ensures the overall progress updates immediately
-                
+
                 // Clear buffer and return to normal mode
                 self.ui_state.update_buffer.clear();
                 self.input_mode = InputMode::Normal;
-                // Also exit indicator selection mode after successful update
-                self.ui_state.selected_indicator_index = None;
-                
+
                 // Show success message with new value
                 self.set_info(&format!("Indicator updated to {:.1}", new_value));
             }
@@ -1994,10 +1841,13 @@ impl App {
     /// Handle indicator update mode
     fn handle_indicator_update_mode(&mut self, key: KeyEvent, indicator_id: String) -> Result<()> {
         // Find the indicator
-        let indicator = self.indicators.indicators.iter()
+        let indicator = self
+            .indicators
+            .indicators
+            .iter()
             .find(|ind| ind.id == indicator_id)
             .cloned();
-        
+
         if let Some(indicator) = indicator {
             match key.code {
                 KeyCode::Enter => {
@@ -2008,15 +1858,14 @@ impl App {
                     // Cancel update
                     self.ui_state.update_buffer.clear();
                     self.input_mode = InputMode::Normal;
-                    // Also exit indicator selection mode when canceling
-                    self.ui_state.selected_indicator_index = None;
                 }
                 KeyCode::Char('+') | KeyCode::Char('=') => {
                     // Increment by 1
                     let current: f64 = self.ui_state.update_buffer.parse().unwrap_or(0.0);
                     match indicator.unit {
                         crate::models::IndicatorUnit::Percent => {
-                            self.ui_state.update_buffer = format!("{:.0}", (current + 5.0).min(100.0));
+                            self.ui_state.update_buffer =
+                                format!("{:.0}", (current + 5.0).min(100.0));
                         }
                         _ => {
                             self.ui_state.update_buffer = format!("{:.1}", current + 1.0);
@@ -2028,10 +1877,12 @@ impl App {
                     let current: f64 = self.ui_state.update_buffer.parse().unwrap_or(0.0);
                     match indicator.unit {
                         crate::models::IndicatorUnit::Percent => {
-                            self.ui_state.update_buffer = format!("{:.0}", (current - 5.0).max(0.0));
+                            self.ui_state.update_buffer =
+                                format!("{:.0}", (current - 5.0).max(0.0));
                         }
                         _ => {
-                            self.ui_state.update_buffer = format!("{:.1}", (current - 1.0).max(0.0));
+                            self.ui_state.update_buffer =
+                                format!("{:.1}", (current - 1.0).max(0.0));
                         }
                     }
                 }
@@ -2050,7 +1901,8 @@ impl App {
                                     self.ui_state.update_buffer = format!("{:.1}", current + 15.0);
                                 }
                                 crate::models::IndicatorUnit::Percent => {
-                                    self.ui_state.update_buffer = format!("{:.0}", (current + 10.0).min(100.0));
+                                    self.ui_state.update_buffer =
+                                        format!("{:.0}", (current + 10.0).min(100.0));
                                 }
                                 _ => {
                                     self.ui_state.update_buffer = format!("{:.1}", current + 1.0);
@@ -2068,7 +1920,8 @@ impl App {
                                     self.ui_state.update_buffer = format!("{:.1}", current + 30.0);
                                 }
                                 crate::models::IndicatorUnit::Percent => {
-                                    self.ui_state.update_buffer = format!("{:.0}", (current + 25.0).min(100.0));
+                                    self.ui_state.update_buffer =
+                                        format!("{:.0}", (current + 25.0).min(100.0));
                                 }
                                 _ => {
                                     self.ui_state.update_buffer = format!("{:.1}", current + 5.0);
@@ -2086,7 +1939,8 @@ impl App {
                                     self.ui_state.update_buffer = format!("{:.1}", current + 60.0);
                                 }
                                 crate::models::IndicatorUnit::Percent => {
-                                    self.ui_state.update_buffer = format!("{:.0}", (current + 50.0).min(100.0));
+                                    self.ui_state.update_buffer =
+                                        format!("{:.0}", (current + 50.0).min(100.0));
                                 }
                                 _ => {
                                     self.ui_state.update_buffer = format!("{:.1}", current + 10.0);
@@ -2116,7 +1970,7 @@ impl App {
             self.set_error("Indicator not found".to_string());
             self.input_mode = InputMode::Normal;
         }
-        
+
         Ok(())
     }
 
@@ -2168,19 +2022,23 @@ impl App {
                     } else {
                         Some(notes_buffer)
                     };
-                    
+
                     // Add to indicators
                     let indicator_id = indicator.id.clone();
                     self.indicators.indicators.push(indicator.clone());
                     self.indicators_needs_save = true;
-                    
+
                     // Update the objective to include this indicator's ID
-                    if let Some(objective) = self.objectives.objectives.iter_mut()
-                        .find(|obj| obj.id == objective_id) {
+                    if let Some(objective) = self
+                        .objectives
+                        .objectives
+                        .iter_mut()
+                        .find(|obj| obj.id == objective_id)
+                    {
                         objective.indicators.push(indicator_id);
                         self.objectives_needs_save = true;
                     }
-                    
+
                     // Return to management mode with updated list
                     let objective_indicators: Vec<crate::models::IndicatorDef> = self
                         .indicators
@@ -2189,7 +2047,7 @@ impl App {
                         .filter(|ind| ind.objective_id.as_ref() == Some(&objective_id))
                         .cloned()
                         .collect();
-                    
+
                     self.input_mode = InputMode::IndicatorManagement {
                         objective_id,
                         objective_title,
@@ -2197,7 +2055,7 @@ impl App {
                         selection_index: 0,
                         editing_field: None,
                     };
-                    
+
                     self.set_info("Indicator created");
                 } else {
                     self.set_error("Indicator name is required".to_string());
@@ -2223,11 +2081,14 @@ impl App {
                             'd' | 'D' => unit = crate::models::IndicatorUnit::Dollars,
                             'p' | 'P' => unit = crate::models::IndicatorUnit::Percent,
                             'u' | 'U' => {
-                                unit = crate::models::IndicatorUnit::Custom(unit_custom_buffer.clone())
+                                unit =
+                                    crate::models::IndicatorUnit::Custom(unit_custom_buffer.clone())
                             }
                             _ if matches!(unit, crate::models::IndicatorUnit::Custom(_)) => {
                                 unit_custom_buffer.push(c);
-                                unit = crate::models::IndicatorUnit::Custom(unit_custom_buffer.clone());
+                                unit = crate::models::IndicatorUnit::Custom(
+                                    unit_custom_buffer.clone(),
+                                );
                             }
                             _ => {}
                         }
@@ -2241,8 +2102,12 @@ impl App {
                     4 => {
                         // Direction (h=Higher, l=Lower, r=Range)
                         match c {
-                            'h' | 'H' => direction = crate::models::IndicatorDirection::HigherIsBetter,
-                            'l' | 'L' => direction = crate::models::IndicatorDirection::LowerIsBetter,
+                            'h' | 'H' => {
+                                direction = crate::models::IndicatorDirection::HigherIsBetter
+                            }
+                            'l' | 'L' => {
+                                direction = crate::models::IndicatorDirection::LowerIsBetter
+                            }
                             'r' | 'R' => direction = crate::models::IndicatorDirection::WithinRange,
                             _ => {}
                         }
@@ -2250,7 +2115,7 @@ impl App {
                     5 => notes_buffer.push(c), // Notes
                     _ => {}
                 }
-                
+
                 self.input_mode = InputMode::IndicatorCreation {
                     objective_id,
                     objective_title,
@@ -2267,16 +2132,22 @@ impl App {
             KeyCode::Backspace => {
                 // Remove character based on current field
                 match field_index {
-                    0 => { name_buffer.pop(); }
+                    0 => {
+                        name_buffer.pop();
+                    }
                     2 if matches!(unit, crate::models::IndicatorUnit::Custom(_)) => {
                         unit_custom_buffer.pop();
                         unit = crate::models::IndicatorUnit::Custom(unit_custom_buffer.clone());
                     }
-                    3 => { target_buffer.pop(); }
-                    5 => { notes_buffer.pop(); }
+                    3 => {
+                        target_buffer.pop();
+                    }
+                    5 => {
+                        notes_buffer.pop();
+                    }
                     _ => {}
                 }
-                
+
                 self.input_mode = InputMode::IndicatorCreation {
                     objective_id,
                     objective_title,
@@ -2299,7 +2170,7 @@ impl App {
                     .filter(|ind| ind.objective_id.as_ref() == Some(&objective_id))
                     .cloned()
                     .collect();
-                
+
                 self.input_mode = InputMode::IndicatorManagement {
                     objective_id,
                     objective_title,

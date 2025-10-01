@@ -1,4 +1,3 @@
-use std::io;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
@@ -8,6 +7,7 @@ use ratatui::{
     backend::{Backend, CrosstermBackend},
     Terminal,
 };
+use std::io;
 
 pub fn init_terminal() -> anyhow::Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
@@ -18,7 +18,9 @@ pub fn init_terminal() -> anyhow::Result<Terminal<CrosstermBackend<io::Stdout>>>
     Ok(terminal)
 }
 
-pub fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> anyhow::Result<()> {
+pub fn restore_terminal(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+) -> anyhow::Result<()> {
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -29,7 +31,10 @@ pub fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -
     Ok(())
 }
 
-pub fn run_app<B: Backend>(terminal: &mut Terminal<B>, mut app: crate::ui::App) -> anyhow::Result<()> {
+pub fn run_app<B: Backend>(
+    terminal: &mut Terminal<B>,
+    mut app: crate::ui::App,
+) -> anyhow::Result<()> {
     loop {
         terminal.draw(|f| app.render(f))?;
 

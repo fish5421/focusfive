@@ -35,6 +35,7 @@ fn test_concurrent_writes_no_collision() {
     let dir = TempDir::new().unwrap();
     let config = Config {
         goals_dir: dir.path().to_string_lossy().to_string(),
+        data_root: dir.path().to_string_lossy().to_string(),
     };
     let config = Arc::new(config);
 
@@ -203,10 +204,8 @@ fn test_round_trip_with_special_cases() {
 
     // Set up goals with edge cases
     goals.work.goal = Some("Handle (parentheses) & special chars!".to_string());
-    goals.work.actions[0] = Action {
-        text: "Task with [brackets] and symbols @#$".to_string(),
-        completed: true,
-    };
+    goals.work.actions[0] =
+        Action::from_markdown("Task with [brackets] and symbols @#$".to_string(), true);
 
     // Generate markdown and parse it back
     let markdown = generate_markdown(&goals);
@@ -290,6 +289,7 @@ mod integration {
         let dir = TempDir::new().unwrap();
         let config = Config {
             goals_dir: dir.path().to_string_lossy().to_string(),
+            data_root: dir.path().to_string_lossy().to_string(),
         };
 
         // Create goals

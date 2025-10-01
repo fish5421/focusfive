@@ -156,37 +156,37 @@ impl Action {
             ActionStatus::Blocked => '✗',
         }
     }
-    
+
     /// Get all objective IDs (combines legacy single objective_id with new objective_ids)
     pub fn get_all_objective_ids(&self) -> Vec<String> {
         let mut ids = self.objective_ids.clone();
-        
+
         // Include the legacy single objective_id if present and not already in the list
         if let Some(single_id) = &self.objective_id {
             if !ids.contains(single_id) {
                 ids.push(single_id.clone());
             }
         }
-        
+
         ids
     }
-    
+
     /// Add an objective ID to this action
     pub fn add_objective_id(&mut self, objective_id: String) {
         if !self.objective_ids.contains(&objective_id) {
             self.objective_ids.push(objective_id.clone());
-            
+
             // If this is the first objective and objective_id is not set, set it for compatibility
             if self.objective_id.is_none() {
                 self.objective_id = Some(objective_id);
             }
         }
     }
-    
+
     /// Remove an objective ID from this action
     pub fn remove_objective_id(&mut self, objective_id: &str) {
         self.objective_ids.retain(|id| id != objective_id);
-        
+
         // Also clear the legacy field if it matches
         if let Some(ref single_id) = self.objective_id {
             if single_id == objective_id {
@@ -476,23 +476,23 @@ impl ActionTemplates {
     }
 
     /// Add or update a template
-pub fn add_template(&mut self, name: String, actions: Vec<String>) {
-    // Limit to 5 actions per template
-    let actions: Vec<String> = actions
-        .into_iter()
-        .take(5)
-        .map(|s| {
-            if s.len() > MAX_ACTION_LENGTH {
-                s.chars().take(MAX_ACTION_LENGTH).collect()
-            } else {
-                s
-            }
-        })
-        .collect();
+    pub fn add_template(&mut self, name: String, actions: Vec<String>) {
+        // Limit to 5 actions per template
+        let actions: Vec<String> = actions
+            .into_iter()
+            .take(5)
+            .map(|s| {
+                if s.len() > MAX_ACTION_LENGTH {
+                    s.chars().take(MAX_ACTION_LENGTH).collect()
+                } else {
+                    s
+                }
+            })
+            .collect();
 
-    self.templates.insert(name, actions);
-    self.modified = chrono::Local::now().date_naive();
-}
+        self.templates.insert(name, actions);
+        self.modified = chrono::Local::now().date_naive();
+    }
 
     /// Remove a template
     pub fn remove_template(&mut self, name: &str) -> bool {
@@ -701,18 +701,18 @@ pub enum ObjectiveStatus {
 /// Long-term objective that can be linked to daily actions
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Objective {
-    pub id: String,                              // UUID as string
-    pub domain: OutcomeType,                     // Work|Health|Family
-    pub title: String,                           // Brief title
-    pub description: Option<String>,             // Detailed description
-    pub start: NaiveDate,                        // Start date
-    pub end: Option<NaiveDate>,                  // End date (optional for open-ended)
-    pub status: ObjectiveStatus,                 // Current status
+    pub id: String,                  // UUID as string
+    pub domain: OutcomeType,         // Work|Health|Family
+    pub title: String,               // Brief title
+    pub description: Option<String>, // Detailed description
+    pub start: NaiveDate,            // Start date
+    pub end: Option<NaiveDate>,      // End date (optional for open-ended)
+    pub status: ObjectiveStatus,     // Current status
     #[serde(default)]
-    pub indicators: Vec<String>,                 // Has MANY indicators (UUIDs)
-    pub created: chrono::DateTime<chrono::Utc>,  // Creation timestamp
+    pub indicators: Vec<String>, // Has MANY indicators (UUIDs)
+    pub created: chrono::DateTime<chrono::Utc>, // Creation timestamp
     pub modified: chrono::DateTime<chrono::Utc>, // Last modification timestamp
-    pub parent_id: Option<String>,               // For hierarchical objectives
+    pub parent_id: Option<String>,   // For hierarchical objectives
 }
 
 impl Objective {
@@ -832,12 +832,12 @@ impl Default for IndicatorsData {
 }
 
 /// New Indicator type for UI enhancement (as per plan)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum IndicatorType {
-    Counter,     // Incremental counting (businesses reviewed)
-    Duration,    // Time-based (hours of research)
-    Percentage,  // 0-100% (completion percentage)
-    Boolean,     // Complete/Incomplete (template ready)
+    Counter,    // Incremental counting (businesses reviewed)
+    Duration,   // Time-based (hours of research)
+    Percentage, // 0-100% (completion percentage)
+    Boolean,    // Complete/Incomplete (template ready)
 }
 
 /// Entry in indicator history tracking
@@ -851,14 +851,14 @@ pub struct IndicatorEntry {
 /// Enhanced indicator struct for expandable UI
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Indicator {
-    pub id: String,                        // UUID as string
+    pub id: String, // UUID as string
     pub name: String,
     pub indicator_type: IndicatorType,
     pub current_value: f64,
     pub target_value: f64,
-    pub unit: String,                      // "count", "hours", "percentage", "boolean"
+    pub unit: String, // "count", "hours", "percentage", "boolean"
     #[serde(default)]
-    pub history: Vec<IndicatorEntry>,      // Track changes over time
+    pub history: Vec<IndicatorEntry>, // Track changes over time
 }
 
 impl Indicator {
@@ -869,7 +869,8 @@ impl Indicator {
             IndicatorType::Duration => "hours",
             IndicatorType::Percentage => "percentage",
             IndicatorType::Boolean => "boolean",
-        }.to_string();
+        }
+        .to_string();
 
         Indicator {
             id: uuid::Uuid::new_v4().to_string(),

@@ -524,13 +524,13 @@ mod graceful_degradation_tests {
         let partial_markdown_examples = vec![
             // Only header, no outcomes
             "# January 15, 2025 - Day 12",
-            
+
             // Header + one outcome
             "# January 15, 2025\n\n## Work\n- [x] Single task",
-            
+
             // Header + incomplete outcome
             "# January 15, 2025\n\n## Work\n- [x] Task 1\n- [ ] Task 2",
-            
+
             // All outcomes but some incomplete
             "# January 15, 2025\n\n## Work\n- [x] Work task\n\n## Health\n- [ ] Health task\n\n## Family",
         ];

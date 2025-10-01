@@ -1,5 +1,5 @@
+use crate::models::{Config, DailyGoals, OutcomeType};
 use chrono::{Duration, NaiveDate};
-use crate::models::{DailyGoals, Config, OutcomeType};
 
 pub struct Statistics {
     pub daily_completion: f64,
@@ -36,21 +36,23 @@ impl Statistics {
         }
 
         // Calculate daily completion for today
-        let daily_completion = if let Ok(goals) = crate::data::load_or_create_goals(current_date, config) {
-            calculate_completion_percentage(&goals)
-        } else {
-            0.0
-        };
+        let daily_completion =
+            if let Ok(goals) = crate::data::load_or_create_goals(current_date, config) {
+                calculate_completion_percentage(&goals)
+            } else {
+                0.0
+            };
 
         // Calculate outcome percentages for today
-        let outcome_percentages = if let Ok(goals) = crate::data::load_or_create_goals(current_date, config) {
-            let work_pct = calculate_outcome_percentage(&goals, OutcomeType::Work);
-            let health_pct = calculate_outcome_percentage(&goals, OutcomeType::Health);
-            let family_pct = calculate_outcome_percentage(&goals, OutcomeType::Family);
-            (work_pct, health_pct, family_pct)
-        } else {
-            (0.0, 0.0, 0.0)
-        };
+        let outcome_percentages =
+            if let Ok(goals) = crate::data::load_or_create_goals(current_date, config) {
+                let work_pct = calculate_outcome_percentage(&goals, OutcomeType::Work);
+                let health_pct = calculate_outcome_percentage(&goals, OutcomeType::Health);
+                let family_pct = calculate_outcome_percentage(&goals, OutcomeType::Family);
+                (work_pct, health_pct, family_pct)
+            } else {
+                (0.0, 0.0, 0.0)
+            };
 
         Self {
             daily_completion,
@@ -104,10 +106,9 @@ impl Statistics {
 
 fn calculate_completion_percentage(goals: &DailyGoals) -> f64 {
     let total = 9; // 3 outcomes * 3 actions
-    let completed =
-        goals.work.actions.iter().filter(|a| a.completed).count() +
-        goals.health.actions.iter().filter(|a| a.completed).count() +
-        goals.family.actions.iter().filter(|a| a.completed).count();
+    let completed = goals.work.actions.iter().filter(|a| a.completed).count()
+        + goals.health.actions.iter().filter(|a| a.completed).count()
+        + goals.family.actions.iter().filter(|a| a.completed).count();
 
     (completed as f64 / total as f64) * 100.0
 }
@@ -145,7 +146,11 @@ mod tests {
             objective_ids: vec![],
             created: chrono::Utc::now(),
             modified: chrono::Utc::now(),
-            completed_at: if completed { Some(chrono::Utc::now()) } else { None },
+            completed_at: if completed {
+                Some(chrono::Utc::now())
+            } else {
+                None
+            },
         }
     }
 

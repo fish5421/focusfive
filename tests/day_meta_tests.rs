@@ -20,7 +20,7 @@ fn test_metadata_creation_and_save() -> Result<()> {
             outcome_type: OutcomeType::Work,
             goal: Some("Ship feature".to_string()),
             actions: vec![
-{
+                {
                     let mut action = Action::new_empty();
                     action.text = "Write code".to_string();
                     action.completed = true;
@@ -45,7 +45,7 @@ fn test_metadata_creation_and_save() -> Result<()> {
             outcome_type: OutcomeType::Health,
             goal: Some("Stay active".to_string()),
             actions: vec![
-{
+                {
                     let mut action = Action::new_empty();
                     action.text = "Morning walk".to_string();
                     action.completed = true;
@@ -70,7 +70,7 @@ fn test_metadata_creation_and_save() -> Result<()> {
             outcome_type: OutcomeType::Family,
             goal: Some("Be present".to_string()),
             actions: vec![
-{
+                {
                     let mut action = Action::new_empty();
                     action.text = "Breakfast together".to_string();
                     action.completed = false;

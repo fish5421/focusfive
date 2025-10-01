@@ -2,11 +2,10 @@ use std::collections::HashSet;
 
 /// State management for expandable action list UI
 pub struct ExpandableActionState {
-    pub expanded_actions: HashSet<String>,      // Which actions are expanded (by UUID)
-    pub selected_action_index: usize,           // Current selection
-    pub selected_indicator_index: Option<usize>, // Sub-selection within expanded
-    pub indicator_update_mode: bool,            // Whether we're in update mode
-    pub update_buffer: String,                  // Input buffer for updates
+    pub expanded_actions: HashSet<String>, // Which actions are expanded (by UUID)
+    pub selected_action_index: usize,      // Current selection
+    pub indicator_update_mode: bool,       // Whether we're in update mode
+    pub update_buffer: String,             // Input buffer for updates
 }
 
 impl Default for ExpandableActionState {
@@ -20,7 +19,6 @@ impl ExpandableActionState {
         Self {
             expanded_actions: HashSet::new(),
             selected_action_index: 0,
-            selected_indicator_index: None,
             indicator_update_mode: false,
             update_buffer: String::new(),
         }
@@ -30,12 +28,11 @@ impl ExpandableActionState {
     pub fn toggle_expansion(&mut self, action_id: String) {
         if self.expanded_actions.contains(&action_id) {
             self.expanded_actions.remove(&action_id);
-            self.selected_indicator_index = None; // Clear sub-selection when collapsing
         } else {
             self.expanded_actions.insert(action_id);
         }
     }
-    
+
     /// Check if an action is expanded
     pub fn is_expanded(&self, action_id: &str) -> bool {
         self.expanded_actions.contains(action_id)
@@ -44,7 +41,6 @@ impl ExpandableActionState {
     /// Clear all expanded states
     pub fn clear_expansions(&mut self) {
         self.expanded_actions.clear();
-        self.selected_indicator_index = None;
     }
 
     /// Enter indicator update mode
@@ -57,20 +53,6 @@ impl ExpandableActionState {
     pub fn exit_update_mode(&mut self) {
         self.indicator_update_mode = false;
         self.update_buffer.clear();
-    }
-
-    /// Navigate down through actions and expanded indicators
-    pub fn navigate_down(&mut self, max_items: usize) {
-        if self.selected_action_index < max_items.saturating_sub(1) {
-            self.selected_action_index += 1;
-        }
-    }
-
-    /// Navigate up through actions and expanded indicators
-    pub fn navigate_up(&mut self) {
-        if self.selected_action_index > 0 {
-            self.selected_action_index -= 1;
-        }
     }
 }
 
@@ -104,7 +86,7 @@ mod tests {
 
         state.toggle_expansion(id1.clone());
         state.toggle_expansion(id2.clone());
-        
+
         assert!(state.is_expanded(&id1));
         assert!(state.is_expanded(&id2));
         assert!(!state.is_expanded(&id3));
@@ -115,28 +97,26 @@ mod tests {
     }
 
     #[test]
-    fn test_navigation() {
+    fn test_selection_index() {
         let mut state = ExpandableActionState::new();
         assert_eq!(state.selected_action_index, 0);
 
-        state.navigate_down(10);
+        // Can set index directly
+        state.selected_action_index = 1;
         assert_eq!(state.selected_action_index, 1);
 
-        state.navigate_down(10);
-        state.navigate_down(10);
+        state.selected_action_index = 3;
         assert_eq!(state.selected_action_index, 3);
 
-        state.navigate_up();
+        state.selected_action_index = 2;
         assert_eq!(state.selected_action_index, 2);
 
-        // Can't go below 0
+        // Can be set to 0
         state.selected_action_index = 0;
-        state.navigate_up();
         assert_eq!(state.selected_action_index, 0);
 
-        // Can't exceed max
+        // Can be set to any value
         state.selected_action_index = 8;
-        state.navigate_down(9); // max_items is 9, so max index is 8
         assert_eq!(state.selected_action_index, 8);
     }
 
